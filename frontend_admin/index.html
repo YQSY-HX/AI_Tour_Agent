@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>景区导览 - 管理后台</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", "PingFang SC", sans-serif;
+      background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    h1 { font-size: 1.6rem; margin-bottom: 8px; }
+    .subtitle { color: #94a3b8; margin-bottom: 24px; font-size: 0.9rem; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 20px;
+    }
+    .card {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px;
+      padding: 20px;
+      backdrop-filter: blur(8px);
+    }
+    .card h2 { font-size: 1rem; margin-bottom: 16px; color: #38bdf8; }
+    .stat-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+    .stat-box {
+      flex: 1; min-width: 100px;
+      background: rgba(56,189,248,0.15);
+      border-radius: 8px;
+      padding: 12px;
+      text-align: center;
+    }
+    .stat-box .num { font-size: 1.8rem; font-weight: 700; color: #38bdf8; }
+    .stat-box .label { font-size: 0.75rem; color: #94a3b8; margin-top: 4px; }
+    .chart { width: 100%; height: 260px; }
+    .upload-area {
+      border: 2px dashed rgba(56,189,248,0.5);
+      border-radius: 8px;
+      padding: 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .upload-area:hover { background: rgba(56,189,248,0.1); }
+    input[type="file"] { display: none; }
+    .btn {
+      padding: 10px 24px;
+      background: #38bdf8;
+      color: #0f172a;
+      border: none;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn:hover { background: #7dd3fc; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn.danger { background: #ef4444; color: #fff; }
+    .btn.danger:hover { background: #f87171; }
+    .btn.small { padding: 4px 12px; font-size: 0.75rem; }
+    .toast {
+      margin-top: 12px;
+      padding: 10px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      display: none;
+    }
+    .toast.ok { display: block; background: rgba(34,197,94,0.2); color: #86efac; }
+    .toast.err { display: block; background: rgba(239,68,68,0.2); color: #fca5a5; }
+    .topics-list { list-style: none; }
+    .topics-list li {
+      padding: 8px 12px;
+      margin: 6px 0;
+      background: rgba(255,255,255,0.05);
+      border-radius: 6px;
+      display: flex;
+      justify-content: space-between;
+    }
+    .topics-list .tag { color: #fbbf24; font-weight: 600; }
+    .doc-list { list-style: none; max-height: 200px; overflow-y: auto; }
+    .doc-list li {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 10px 12px; margin: 4px 0;
+      background: rgba(255,255,255,0.04); border-radius: 6px;
+    }
+    .doc-list .doc-name { flex: 1; font-size: 0.82rem; word-break: break-all; }
+    .doc-list .doc-meta { font-size: 0.7rem; color: #64748b; margin-right: 10px; white-space: nowrap; }
+    select, .form-select {
+      width: 100%; padding: 10px; margin-top: 6px;
+      border-radius: 6px; border: 1px solid #334155;
+      background: #1e293b; color: #e2e8f0; font-size: 0.85rem;
+    }
+    .form-label { font-size: 0.82rem; color: #94a3b8; margin-top: 10px; display: block; }
+    #apiBase { width: 100%; padding: 8px; margin-bottom: 12px; border-radius: 6px; border: 1px solid #334155; background: #1e293b; color: #e2e8f0; }
+    .fb-stat-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+    .fb-stat-box {
+      flex: 1; min-width: 80px;
+      background: rgba(255,255,255,0.06);
+      border-radius: 8px; padding: 10px;
+      text-align: center;
+    }
+    .fb-stat-box .num { font-size: 1.4rem; font-weight: 700; }
+    .fb-stat-box .num.good { color: #22c55e; }
+    .fb-stat-box .num.bad { color: #ef4444; }
+    .fb-stat-box .num.rate { color: #38bdf8; }
+    .fb-stat-box .label { font-size: 0.72rem; color: #94a3b8; margin-top: 2px; }
+    .bad-list { list-style: none; max-height: 200px; overflow-y: auto; }
+    .bad-list li {
+      padding: 8px 10px; margin: 4px 0;
+      background: rgba(239,68,68,0.08); border-left: 3px solid #ef4444;
+      border-radius: 4px; font-size: 0.78rem;
+    }
+    .bad-list .bad-q { color: #fca5a5; word-break: break-all; }
+    .bad-list .bad-a { color: #94a3b8; font-size: 0.72rem; margin-top: 2px; word-break: break-all; }
+    .bad-list .bad-time { font-size: 0.65rem; color: #475569; margin-top: 2px; }
+    .bad-list .bad-comment { font-size: 0.7rem; color: #fbbf24; margin-top: 2px; font-style: italic; }
+    .empty-tip { text-align: center; padding: 20px; color: #64748b; font-size: 0.82rem; }
+    .fb-tabs { display: flex; gap: 0; margin-bottom: 10px; border-radius: 6px; overflow: hidden; }
+    .fb-tab {
+      flex: 1; padding: 6px 0; text-align: center; cursor: pointer;
+      background: rgba(255,255,255,0.05); color: #94a3b8; font-size: 0.8rem;
+      border: 1px solid rgba(255,255,255,0.08); transition: all 0.2s;
+    }
+    .fb-tab:first-child { border-radius: 6px 0 0 6px; }
+    .fb-tab:last-child { border-radius: 0 6px 6px 0; }
+    .fb-tab.active { background: #38bdf8; color: #0f172a; font-weight: 600; border-color: #38bdf8; }
+    .fb-tab-badge { display: inline-block; background: rgba(0,0,0,0.2); border-radius: 10px; padding: 0 6px; font-size: 0.68rem; margin-left: 4px; }
+    .fb-refresh-btn { font-size: 0.75rem; padding: 4px 12px; margin-left: auto; }
+  </style>
+</head>
+<body>
+  <h1>🏞️ 灵山胜境 · 管理后台</h1>
+  <p class="subtitle">知识库管理 · 数据大屏 · 数字人配置 · 游客情感分析</p>
+
+  <label>后端 API 地址：</label>
+  <input id="apiBase" type="text" value="http://127.0.0.1:8000" />
+
+  <div class="grid" style="margin-top: 20px;">
+    <!-- 数据概览 -->
+    <div class="card" style="grid-column: 1 / -1;">
+      <h2>📊 数据大屏</h2>
+      <div class="stat-row">
+        <div class="stat-box"><div class="num" id="totalSessions">-</div><div class="label">总会话数</div></div>
+        <div class="stat-box"><div class="num" id="todayQueries">-</div><div class="label">今日问答</div></div>
+        <div class="stat-box"><div class="num" id="satisfaction">-</div><div class="label">满意度</div></div>
+      </div>
+      <div class="grid">
+        <div id="trendChart" class="chart"></div>
+        <div id="topChart" class="chart"></div>
+      </div>
+    </div>
+
+    <!-- 用户反馈 -->
+    <div class="card" style="grid-column: 1 / -1;">
+      <h2>👍 用户反馈统计</h2>
+      <div class="fb-stat-row" id="fbStats">
+        <div class="fb-stat-box"><div class="num" style="color:#94a3b8;">-</div><div class="label">总反馈数</div></div>
+        <div class="fb-stat-box"><div class="num good">-</div><div class="label">👍 好评</div></div>
+        <div class="fb-stat-box"><div class="num bad">-</div><div class="label">👎 差评</div></div>
+        <div class="fb-stat-box"><div class="num rate">-%</div><div class="label">好评率</div></div>
+      </div>
+      <div class="grid">
+        <div id="fbTrendChart" class="chart"></div>
+        <div>
+          <div style="display:flex;align-items:center;margin-bottom:10px;">
+            <h3 style="font-size:0.85rem;color:#94a3b8;">反馈详情</h3>
+            <button class="btn small fb-refresh-btn" onclick="loadFeedback()" style="padding:3px 10px;">🔄 刷新</button>
+          </div>
+          <div class="fb-tabs">
+            <div class="fb-tab active" data-tab="bad" onclick="switchFbTab('bad')">👎 差评<span class="fb-tab-badge" id="badCount">0</span></div>
+            <div class="fb-tab" data-tab="good" onclick="switchFbTab('good')">👍 好评<span class="fb-tab-badge" id="goodCount">0</span></div>
+          </div>
+          <ul class="bad-list" id="feedbackList"><li class="empty-tip">暂无反馈数据</li></ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- 知识库上传 -->
+    <div class="card">
+      <h2>📁 知识库管理</h2>
+      <div class="upload-area" id="dropZone" onclick="document.getElementById('fileInput').click()">
+        <p>点击或拖拽上传 .txt / .pdf</p>
+        <p style="font-size:0.8rem;color:#64748b;margin-top:8px;">上传后将自动重建向量库</p>
+      </div>
+      <input type="file" id="fileInput" accept=".txt,.pdf" />
+      <button class="btn" id="uploadBtn" disabled style="margin-top:8px;">上传文件</button>
+      <div class="toast" id="uploadToast"></div>
+      <h3 style="font-size:0.85rem;margin:16px 0 8px;color:#94a3b8;">已上传文档</h3>
+      <ul class="doc-list" id="docList"></ul>
+    </div>
+
+    <!-- 情感分析 -->
+    <div class="card">
+      <h2>💬 游客感受度分析</h2>
+      <button class="btn" id="sentimentBtn">刷新情感报告</button>
+      <div id="sentimentChart" class="chart" style="margin-top:16px;"></div>
+      <h3 style="font-size:0.85rem;margin:12px 0 8px;color:#94a3b8;">热门话题 TOP5</h3>
+      <ul class="topics-list" id="topicsList"></ul>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const api = () => $('apiBase').value.replace(/\/$/, '');
+
+    let trendChart, topChart, sentimentChart, fbTrendChart;
+    let selectedFile = null;
+
+    function initCharts() {
+      trendChart = echarts.init($('trendChart'));
+      topChart = echarts.init($('topChart'));
+      sentimentChart = echarts.init($('sentimentChart'));
+      fbTrendChart = echarts.init($('fbTrendChart'));
+      window.addEventListener('resize', () => {
+        trendChart?.resize(); topChart?.resize(); sentimentChart?.resize(); fbTrendChart?.resize();
+      });
+    }
+
+    async function loadStats() {
+      try {
+        const res = await fetch(`${api()}/admin/stats`);
+        const data = await res.json();
+        $('totalSessions').textContent = data.total_sessions;
+        $('todayQueries').textContent = data.today_queries;
+        $('satisfaction').textContent = data.satisfaction;
+        trendChart.setOption({
+          title: { text: '近7日问答趋势', textStyle: { color: '#94a3b8', fontSize: 13 } },
+          tooltip: { trigger: 'axis' },
+          grid: { left: 40, right: 20, bottom: 30, top: 40 },
+          xAxis: { type: 'category', data: ['周一','周二','周三','周四','周五','周六','周日'].slice(0, data.trend.length), axisLabel: { color: '#94a3b8' } },
+          yAxis: { type: 'value', axisLabel: { color: '#94a3b8' }, splitLine: { lineStyle: { color: '#334155' } } },
+          series: [{ type: 'line', data: data.trend, smooth: true, areaStyle: { color: 'rgba(56,189,248,0.2)' }, lineStyle: { color: '#38bdf8' }, itemStyle: { color: '#38bdf8' } }]
+        });
+        topChart.setOption({
+          title: { text: '热门问题 TOP', textStyle: { color: '#94a3b8', fontSize: 13 } },
+          tooltip: {},
+          grid: { left: 80, right: 20, bottom: 30, top: 40 },
+          xAxis: { type: 'value', axisLabel: { color: '#94a3b8' } },
+          yAxis: { type: 'category', data: [...data.top_questions].reverse(), axisLabel: { color: '#94a3b8' } },
+          series: [{ type: 'bar', data: data.top_questions.map((_, i) => (data.top_questions.length - i) * 10).reverse(), itemStyle: { color: '#38bdf8' } }]
+        });
+      } catch (e) { console.error('加载统计失败', e); }
+    }
+
+    async function loadSentiment() {
+      try {
+        const res = await fetch(`${api()}/admin/sentiment`, { method: 'POST' });
+        const data = await res.json();
+        sentimentChart.setOption({
+          title: { text: '情感分布', textStyle: { color: '#94a3b8', fontSize: 13 }, left: 'center' },
+          tooltip: { trigger: 'item' },
+          series: [{
+            type: 'pie', radius: ['40%', '70%'],
+            data: [
+              { value: data.positive, name: '正面', itemStyle: { color: '#22c55e' } },
+              { value: data.neutral, name: '中性', itemStyle: { color: '#94a3b8' } },
+              { value: data.negative, name: '负面', itemStyle: { color: '#ef4444' } },
+            ],
+            label: { color: '#e2e8f0' }
+          }]
+        });
+        $('topicsList').innerHTML = (data.topics || []).map((t, i) =>
+          `<li><span>${i + 1}. ${t}</span><span class="tag">热</span></li>`
+        ).join('') || '<li>暂无话题数据</li>';
+      } catch (e) { console.error('情感分析失败', e); }
+    }
+
+    // 文件上传
+    $('fileInput').addEventListener('change', (e) => {
+      selectedFile = e.target.files[0];
+      $('uploadBtn').disabled = !selectedFile;
+      if (selectedFile) $('dropZone').querySelector('p').textContent = `已选择: ${selectedFile.name}`;
+    });
+
+    $('uploadBtn').addEventListener('click', async () => {
+      if (!selectedFile) return;
+      const toast = $('uploadToast');
+      toast.className = 'toast';
+      $('uploadBtn').disabled = true;
+      const form = new FormData();
+      form.append('file', selectedFile);
+      try {
+        const res = await fetch(`${api()}/admin/upload`, { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || '上传失败');
+        toast.textContent = `✅ 上传成功: ${data.filename}，向量库正在后台重建`;
+        toast.className = 'toast ok';
+        loadDocuments();
+      } catch (e) {
+        toast.textContent = `❌ ${e.message}`;
+        toast.className = 'toast err';
+      }
+      $('uploadBtn').disabled = false;
+    });
+
+    // 文档列表
+    async function loadDocuments() {
+      try {
+        const res = await fetch(`${api()}/admin/documents`);
+        const data = await res.json();
+        const list = $('docList');
+        if (!data.files || data.files.length === 0) {
+          list.innerHTML = '<li style="color:#64748b;text-align:center;padding:20px;">暂无文档</li>';
+          return;
+        }
+        list.innerHTML = data.files.map(f => `
+          <li>
+            <span class="doc-name">📄 ${escapeHtml(f.name)}</span>
+            <span class="doc-meta">${f.size_kb}KB</span>
+            <button class="btn danger small" onclick="deleteDoc('${escapeHtml(f.name)}')">删除</button>
+          </li>
+        `).join('');
+      } catch (e) { console.error('加载文档列表失败', e); }
+    }
+
+    window.deleteDoc = async function(filename) {
+      if (!confirm(`确定要删除「${filename}」吗？删除后将自动重建向量库。`)) return;
+      try {
+        const res = await fetch(`${api()}/admin/documents/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || '删除失败');
+        alert('✅ ' + data.message);
+        loadDocuments();
+      } catch (e) { alert('❌ ' + e.message); }
+    };
+
+    function escapeHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    let fbTab = 'bad'; // 当前反馈标签页
+
+    function switchFbTab(tab) {
+      fbTab = tab;
+      document.querySelectorAll('.fb-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+      renderFeedbackList();
+    }
+
+    let feedbackData = null; // 缓存最近一次 stats 数据
+
+    async function loadFeedback() {
+      try {
+        const res = await fetch(`${api()}/admin/feedback/stats`);
+        const data = await res.json();
+        feedbackData = data;
+        // 统计数字
+        const fbStats = $('fbStats');
+        if (data.total > 0) {
+          fbStats.querySelectorAll('.num')[0].textContent = data.total;
+          fbStats.querySelectorAll('.num')[1].textContent = data.good;
+          fbStats.querySelectorAll('.num')[2].textContent = data.bad;
+          fbStats.querySelectorAll('.num')[3].textContent = data.good_rate + '%';
+        }
+        // 标签页计数
+        $('badCount').textContent = data.bad;
+        $('goodCount').textContent = data.good;
+        // 好评率趋势图
+        fbTrendChart.setOption({
+          title: { text: '近 7 日好评率趋势', textStyle: { color: '#94a3b8', fontSize: 13 } },
+          tooltip: { trigger: 'axis', formatter: p => `${p[0].name}<br/>反馈量: ${p[0].data.value} 条<br/>好评率: ${p[1].data.value}%` },
+          grid: { left: 40, right: 40, bottom: 30, top: 40 },
+          legend: { data: ['反馈量', '好评率'], textStyle: { color: '#94a3b8', fontSize: 11 }, right: 10 },
+          xAxis: { type: 'category', data: data.trend.map(t => t.date), axisLabel: { color: '#94a3b8' } },
+          yAxis: [
+            { type: 'value', name: '条', axisLabel: { color: '#94a3b8' }, splitLine: { lineStyle: { color: '#334155' } } },
+            { type: 'value', name: '%', max: 100, axisLabel: { color: '#94a3b8' } },
+          ],
+          series: [
+            { name: '反馈量', type: 'bar', data: data.trend.map(t => ({ value: t.total, name: t.date })), itemStyle: { color: '#38bdf8' }, barWidth: 20 },
+            { name: '好评率', type: 'line', yAxisIndex: 1, data: data.trend.map(t => ({ value: t.rate, name: t.date })), smooth: true, lineStyle: { color: '#22c55e' }, itemStyle: { color: '#22c55e' } },
+          ],
+        });
+        // 渲染当前标签页列表
+        renderFeedbackList();
+      } catch (e) { console.error('加载反馈统计失败', e); }
+    }
+
+    function renderFeedbackList() {
+      const list = $('feedbackList');
+      const items = fbTab === 'bad' ? (feedbackData?.recent_bad || []) : (feedbackData?.recent_good || []);
+      if (items.length === 0) {
+        list.innerHTML = `<li class="empty-tip">暂无${fbTab === 'bad' ? '差评' : '好评'} 🎉</li>`;
+        return;
+      }
+      const icon = fbTab === 'bad' ? '❓' : '✅';
+      list.innerHTML = items.map(r => `
+        <li>
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div style="flex:1;min-width:0;">
+              <div class="bad-q">${icon} ${escapeHtml(r.question)}</div>
+              <div class="bad-a">💬 ${escapeHtml(r.answer)}</div>
+              ${r.comment ? `<div class="bad-comment">📝 ${escapeHtml(r.comment)}</div>` : ''}
+            </div>
+          </div>
+          <div class="bad-time">${r.timestamp?.slice(0, 16) || ''}</div>
+        </li>
+      `).join('');
+    }
+
+    $('sentimentBtn').addEventListener('click', loadSentiment);
+
+    initCharts();
+    loadStats();
+    loadDocuments();
+    loadSentiment();
+    loadFeedback();
+    setInterval(loadStats, 5000);
+    setInterval(loadFeedback, 30000);
+  </script>
+</body>
+</html>

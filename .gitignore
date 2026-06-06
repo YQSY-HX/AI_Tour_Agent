@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+
+# Virtual Environment
+venv/
+.venv/
+
+# Environment & Secrets
+.env
+*.pem
+*.key
+
+# SQLite Database
+*.db
+
+# Chroma Vector Store
+backend/chroma_db/
+
+# IDE
+.trae/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Uploads / Temp
+backend/uploaded/
+backend/temp/
+*.log
+
+# TTS Audio
+*.mp3
+*.wav
