@@ -1,0 +1,8 @@
+[build]
+  command = "echo 'Build complete'"
+  publish = "frontend_tourist"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
