@@ -39,3 +39,6 @@ backend/temp/
 # TTS Audio
 *.mp3
 *.wav
+
+# Documentation (keep locally, don't push to GitHub)
+docs/
