@@ -232,8 +232,15 @@ async def lifespan(app: FastAPI):
             qa_chain = create_qa_chain(vector_db)
             logger.info("向量库与 QA 链加载成功")
         else:
-            logger.warning("chroma_db 为空，请先运行: python rag_chain.py")
-            qa_chain = None
+            # 向量库为空时自动构建
+            logger.info("chroma_db 为空，开始自动构建向量库...")
+            try:
+                qa_chain = rebuild_vectordb()
+                vector_db = load_vectordb()
+                logger.info("向量库自动构建成功")
+            except Exception as build_err:
+                logger.error(f"向量库自动构建失败: {build_err}")
+                qa_chain = None
     except Exception as e:
         logger.error(f"启动加载失败: {e}")
         qa_chain = None
