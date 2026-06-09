@@ -40,5 +40,5 @@ backend/temp/
 *.mp3
 *.wav
 
-# Documentation (keep locally, don't push to GitHub)
-docs/
+# Documentation
+# docs/
