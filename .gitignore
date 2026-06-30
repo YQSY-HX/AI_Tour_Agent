@@ -20,7 +20,6 @@ venv/
 backend/chroma_db/
 
 # IDE
-.trae/
 .vscode/
 .idea/
 *.swp
