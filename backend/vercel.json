@@ -6,7 +6,7 @@
       "use": "@vercel/python",
       "config": {
         "maxDuration": 60,
-        "memory": 2048
+        "memory": 3008
       }
     }
   ],
