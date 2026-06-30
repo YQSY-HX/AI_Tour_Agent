@@ -2,7 +2,7 @@
   "version": 2,
   "builds": [
     {
-      "src": "backend/app.py",
+      "src": "app.py",
       "use": "@vercel/python@3.12.0",
       "config": {
         "maxDuration": 60,
@@ -12,6 +12,6 @@
   ],
   "installCommand": "pip install --break-system-packages -r requirements.txt",
   "routes": [
-    { "src": "/(.*)", "dest": "backend/app.py" }
+    { "src": "/(.*)", "dest": "app.py" }
   ]
 }
