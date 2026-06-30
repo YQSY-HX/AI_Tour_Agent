@@ -1,0 +1,22 @@
+{
+  "name": "frontend_tourist",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "lib": "lib"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "live2d-widget": "^3.1.4",
+    "live2d-widget-model-shizuku": "^1.0.5",
+    "pixi-live2d-display": "^0.5.0-beta",
+    "pixi.js": "^7.2.4"
+  }
+}

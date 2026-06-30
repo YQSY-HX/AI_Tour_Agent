@@ -4,7 +4,22 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI 数字人景区导览</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <!-- 高德地图 JS API 安全密钥 -->
+  <script type="text/javascript">
+    window._AMapSecurityConfig = {
+      securityJsCode: 'cc47d60ec693949821038ee351149a27',
+    }
+  </script>
+  <script type="text/javascript" src="https://webapi.amap.com/maps?v=1.4.15&key=58d0c2d7dc3d9812dc4b761a288f27c5"></script>
+  <!-- Live2D Cubism Core (Cubism 4 runtime) -->
+  <script src="./live2d_sdk/public/core/live2dcubismcore.min.js"></script>
+  <!-- pixi.js v7 -->
+  <script src="./node_modules/pixi.js/dist/pixi.min.js"></script>
+  <!-- pixi-live2d-display v0.5 (Cubism 4) -->
+  <script>window.process = { env: { NODE_ENV: 'production' } };</script>
+  <script src="./node_modules/pixi-live2d-display/dist/cubism4.js"></script>
+  <!-- marked.js for Markdown rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -136,6 +151,38 @@
       border-radius: 4px;
       font-size: 0.7rem;
     }
+    /* 密码可见切换 */
+    .pwd-group { position: relative; }
+    .pwd-group input { padding-right: 42px; }
+    .pwd-toggle {
+      position: absolute; right: 2px; top: 50%; transform: translateY(-50%);
+      width: 38px; height: 38px; border: none; background: transparent;
+      cursor: pointer; font-size: 1.1rem; color: #94a3b8; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center; transition: color 0.15s;
+    }
+    .pwd-toggle:hover { color: #475569; }
+    /* 登录按钮加载态 */
+    .login-btn .btn-spinner {
+      display: none; width: 18px; height: 18px; border: 2.5px solid rgba(255,255,255,0.3);
+      border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite;
+      margin-right: 8px; vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .login-btn.loading .btn-spinner { display: inline-block; }
+    .login-btn.loading .btn-text { display: none; }
+    /* 登录页暗色模式 */
+    body.dark #loginView { background: #0f172a; }
+    body.dark .login-card { background: rgba(30,41,59,0.95); box-shadow: 0 8px 32px rgba(0,0,0,0.35); }
+    body.dark .login-title { color: #5eead4; }
+    body.dark .login-subtitle { color: #94a3b8; }
+    body.dark .form-group label { color: #cbd5e1; }
+    body.dark .form-group input { background: #1e293b; border-color: #334155; color: #e2e8f0; }
+    body.dark .form-group input:focus { border-color: #0d9488; background: #0f172a; }
+    body.dark .form-group input::placeholder { color: #64748b; }
+    body.dark .login-tip { color: #64748b; }
+    body.dark .login-tip code { background: #334155; color: #cbd5e1; }
+    body.dark .pwd-toggle { color: #64748b; }
+    body.dark .pwd-toggle:hover { color: #cbd5e1; }
     .logout-sidebar-btn {
       width: 100%;
       margin-top: 10px;
@@ -401,7 +448,7 @@
     body.dark .chat-bubble.user { background: #0d9488; color: #fff; }
     body.dark .interest-tag { background: #1e293b; color: #94a3b8; }
     body.dark .interest-tag.active { background: #0d9488; color: #fff; }
-    body.dark .avatar-canvas-wrap { background: #1e293b; border-color: #334155; }
+    body.dark .avatar-icon-wrap { background: linear-gradient(135deg, #0f766e, #115e59); }
     body.dark #textInput { background: #1e293b; color: #e2e8f0; border-color: #334155; }
     body.dark .weather-detail { background: #1e293b; color: #94a3b8; }
     body.dark .show-time { color: #5eead4; }
@@ -432,17 +479,108 @@
       box-shadow: 0 2px 8px rgba(0,0,0,0.15);
     }
     main {
-      max-width: 680px;
+      max-width: 1465px;
       width: 100%;
       margin: 0 auto;
       flex: 1;
       min-height: 0;
       padding: 6px 20px 0;
       display: flex;
+      flex-direction: row;
+      gap: 16px;
+    }
+    .chat-main {
+      flex: 1;
+      min-width: 0;
+      display: flex;
       flex-direction: column;
     }
+    /* Live2D 数字人面板 */
+    .live2d-panel {
+      width: 320px;
+      min-width: 320px;
+      background: rgba(255,255,255,0.95);
+      border-radius: 16px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      margin-bottom: 20px;
+      margin-left: 65px;
+    }
+    .live2d-header {
+      padding: 12px 16px;
+      background: linear-gradient(135deg, #0d9488, #14b8a6);
+      color: #fff;
+      text-align: center;
+    }
+    .live2d-header h3 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+    .live2d-header p {
+      font-size: 0.72rem;
+      opacity: 0.9;
+    }
+    .live2d-container {
+      flex: 1;
+      position: relative;
+      background: linear-gradient(180deg, #e0f2fe 0%, #f0fdf4 100%);
+      min-height: 400px;
+    }
+    .live2d-container canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+    }
+    .live2d-controls {
+      padding: 12px;
+      background: #f8fafc;
+      border-top: 1px solid #e2e8f0;
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+    }
+    .live2d-btn {
+      padding: 6px 14px;
+      border-radius: 8px;
+      border: 1.5px solid #e2e8f0;
+      background: #fff;
+      color: #475569;
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .live2d-btn:hover {
+      border-color: #0d9488;
+      color: #0d9488;
+      background: #f0fdfa;
+    }
+    .live2d-btn.active {
+      background: #0d9488;
+      color: #fff;
+      border-color: #0d9488;
+    }
+    body.dark .live2d-panel { background: rgba(30,41,59,0.95); }
+    body.dark .live2d-container { background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%); }
+    body.dark .live2d-controls { background: #1e293b; border-top-color: #334155; }
+    body.dark .live2d-btn { background: #334155; color: #e2e8f0; border-color: #475569; }
+    body.dark .live2d-btn:hover { background: #475569; border-color: #0d9488; color: #5eead4; }
+    body.dark .live2d-btn.active { background: #0d9488; color: #fff; border-color: #0d9488; }
     .view { display: none; }
     .view.active { display: block; }
+    /* Toast 通知 */
+    .toast {
+      position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+      background: rgba(15,23,42,0.9); color: #fff; padding: 12px 24px;
+      border-radius: 10px; font-size: 0.85rem; z-index: 9999;
+      opacity: 0; transition: opacity 0.3s; pointer-events: none;
+    }
+    .toast.show { opacity: 1; }
+    .toast.error { background: rgba(239,68,68,0.9); }
+    body.dark .toast { background: rgba(226,232,240,0.9); color: #0f172a; }
+    body.dark .toast.error { background: rgba(239,68,68,0.9); color: #fff; }
     #chatView.active {
       display: flex;
       flex-direction: column;
@@ -455,6 +593,10 @@
       flex: 1;
       min-height: 0;
       padding-right: 6px;
+      background: rgba(255,255,255,0.95);
+      border-radius: 16px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      margin-bottom: 20px;
     }
     .avatar-section {
       display: flex;
@@ -467,8 +609,14 @@
       box-shadow: 0 2px 10px rgba(0,0,0,0.06);
       flex-shrink: 0;
     }
-    .avatar-canvas-wrap { position: relative; width: 72px; height: 72px; flex-shrink: 0; }
-    canvas#avatarCanvas { width: 72px; height: 72px; border-radius: 50%; box-shadow: 0 2px 12px rgba(13,148,136,0.25); }
+    .avatar-icon-wrap {
+      width: 48px; height: 48px; flex-shrink: 0;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #0d9488, #14b8a6);
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 2px 12px rgba(13,148,136,0.25);
+    }
+    .avatar-icon { font-size: 1.5rem; }
     .avatar-label { font-size: 0.85rem; color: #0f766e; font-weight: 600; }
     .avatar-label .status-text { font-size: 0.7rem; color: #64748b; font-weight: 400; }
     .interest-tags { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 0 10px 0; flex-shrink: 0; }
@@ -508,6 +656,7 @@
     }
     .msg.user .bubble { background: #0d9488; color: #fff; border-bottom-right-radius: 4px; }
     .msg.bot .bubble { background: #f1f5f9; color: #334155; border-bottom-left-radius: 4px; white-space: pre-line; }
+    .msg.bot .bubble.streaming { position: relative; }
     .msg.bot .bubble.streaming::after { content: '▋'; animation: blink 0.8s step-end infinite; color: #0d9488; margin-left: 2px; }
     @keyframes blink { 50% { opacity: 0; } }
     .msg .time { font-size: 0.66rem; color: #94a3b8; margin-top: 3px; }
@@ -578,15 +727,136 @@
     .btn-send { background: #0d9488; color: #fff; }
     .btn-send:disabled { background: #94a3b8; cursor: not-allowed; }
     .btn-voice { background: #f59e0b; color: #fff; -webkit-user-select: none; user-select: none; }
+    .btn-image { background: #8b5cf6; color: #fff; }
+    .btn-image.has-image { background: #ef4444; }
+    /* 图片预览 */
+    .image-preview-wrap {
+      display: none; position: relative; margin: 0 10px 8px; flex-shrink: 0;
+    }
+    .image-preview-wrap.show { display: flex; align-items: flex-start; gap: 8px; }
+    .image-preview {
+      max-width: 120px; max-height: 120px; border-radius: 10px;
+      object-fit: cover; border: 2px solid #e2e8f0;
+    }
+    .image-preview-remove {
+      width: 26px; height: 26px; border-radius: 50%; border: none;
+      background: #ef4444; color: #fff; font-size: 0.8rem; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; transition: transform 0.15s;
+    }
+    .image-preview-remove:active { transform: scale(0.9); }
+    /* 聊天中的图片 */
+    .bubble-img {
+      max-width: 200px; max-height: 200px; border-radius: 12px;
+      margin-bottom: 6px; display: block; cursor: pointer;
+    }
     .btn-voice.recording { background: #ef4444; animation: pulse 1s infinite; }
     @keyframes pulse { 50% { opacity: 0.7; } }
     .status { text-align: center; font-size: 0.76rem; color: #64748b; margin: 4px 0; min-height: 20px; flex-shrink: 0; }
-    #mapView { position: relative; width: 100%; flex: 1; min-height: 420px; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.12); }
+    #mapView { position: relative; width: 100%; flex: 1; min-height: 420px; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.12); margin-bottom: 20px; }
     #mapContainer { width: 100%; height: 100%; }
-    .leaflet-popup-content { font-family: "PingFang SC", "Segoe UI", sans-serif; font-size: 0.85rem; line-height: 1.5; min-width: 180px; }
-    .leaflet-popup-content h3 { color: #0f766e; margin-bottom: 4px; font-size: 0.95rem; }
-    .leaflet-popup-content .pop-desc { color: #475569; font-size: 0.78rem; margin: 4px 0; }
-    .leaflet-popup-content .pop-ask {
+    /* 路线规划 */
+    .route-bar {
+      position: absolute; top: 10px; left: 10px; right: 10px; z-index: 10;
+      display: flex; gap: 8px; align-items: center;
+    }
+    .route-plan-btn {
+      padding: 8px 16px; border-radius: 20px; border: none; cursor: pointer;
+      background: #0d9488; color: #fff; font-size: 0.82rem; font-weight: 600;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15); white-space: nowrap;
+      transition: transform 0.15s;
+    }
+    .route-plan-btn:hover { transform: scale(1.03); }
+    .route-plan-btn:active { transform: scale(0.97); }
+    .route-panel {
+      position: absolute; top: 48px; left: 10px; right: 10px; bottom: 10px; z-index: 10;
+      background: rgba(255,255,255,0.97); border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.12); padding: 16px;
+      display: none; flex-direction: column; gap: 12px; overflow-y: auto;
+      max-width: 380px;
+    }
+    .route-panel.show { display: flex; }
+    .route-panel h3 { font-size: 1rem; color: #0f766e; }
+    .route-panel .rp-label { font-size: 0.78rem; color: #64748b; margin-bottom: 2px; }
+    .route-panel select, .route-panel .rp-spot-tags {
+      width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #e2e8f0;
+      font-size: 0.82rem; background: #f8fafc; outline: none;
+    }
+    .route-panel .rp-spot-tags {
+      display: flex; flex-wrap: wrap; gap: 6px; max-height: 120px; overflow-y: auto;
+    }
+    .rp-spot-tag {
+      padding: 4px 10px; border-radius: 12px; border: 1px solid #e2e8f0;
+      font-size: 0.72rem; cursor: pointer; background: #f8fafc; white-space: nowrap;
+      transition: all 0.15s;
+    }
+    .rp-spot-tag.selected { background: #0d9488; color: #fff; border-color: #0d9488; }
+    .rp-generate-btn {
+      width: 100%; padding: 10px; border-radius: 10px; border: none;
+      background: #0d9488; color: #fff; font-size: 0.9rem; font-weight: 600;
+      cursor: pointer; transition: transform 0.15s;
+    }
+    .rp-generate-btn:disabled { background: #94a3b8; cursor: not-allowed; }
+    .rp-generate-btn:not(:disabled):hover { transform: scale(1.02); }
+    .rp-close-btn {
+      position: absolute; top: 8px; right: 12px;
+      background: none; border: none; font-size: 1.2rem; cursor: pointer; color: #94a3b8;
+    }
+    .rp-close-btn:hover { color: #475569; }
+    .rp-loading {
+      text-align: center; padding: 20px; color: #0d9488; font-size: 0.85rem;
+    }
+    .rp-loading .spinner {
+      display: inline-block; width: 20px; height: 20px; border: 3px solid #e2e8f0;
+      border-top-color: #0d9488; border-radius: 50%; animation: spin 0.8s linear infinite;
+      vertical-align: middle; margin-right: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    /* 路线结果 */
+    .route-result {
+      position: absolute; top: 48px; left: 10px; right: 10px; bottom: 10px; z-index: 10;
+      background: rgba(255,255,255,0.97); border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.12); padding: 16px;
+      display: none; flex-direction: column; gap: 10px; overflow-y: auto;
+      max-width: 380px;
+    }
+    .route-result.show { display: flex; }
+    .route-result h3 { font-size: 1rem; color: #0f766e; }
+    .route-result .rr-tips { font-size: 0.75rem; color: #64748b; padding: 6px 10px; background: #fef3c7; border-radius: 8px; }
+    .route-result .rr-spot-card {
+      display: flex; align-items: center; gap: 10px; padding: 10px;
+      background: #f8fafc; border-radius: 10px; cursor: pointer;
+      border-left: 3px solid #0d9488; transition: all 0.15s;
+    }
+    .route-result .rr-spot-card:hover { background: #e0f2fe; }
+    .route-result .rr-spot-card.active { background: #ccfbf1; border-left-color: #f59e0b; }
+    .route-result .rr-num {
+      width: 24px; height: 24px; border-radius: 50%; background: #0d9488;
+      color: #fff; font-size: 0.75rem; font-weight: 700;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .route-result .rr-info { flex: 1; min-width: 0; }
+    .route-result .rr-info .rr-name { font-size: 0.85rem; font-weight: 600; color: #1e293b; }
+    .route-result .rr-info .rr-reason { font-size: 0.72rem; color: #94a3b8; }
+    .route-result .rr-start-btn {
+      width: 100%; padding: 10px; border-radius: 10px; border: none;
+      background: #f59e0b; color: #fff; font-size: 0.9rem; font-weight: 600;
+      cursor: pointer; transition: transform 0.15s;
+    }
+    .route-result .rr-start-btn:hover { transform: scale(1.02); }
+    .route-result .rr-close-btn {
+      position: absolute; top: 8px; right: 12px;
+      background: none; border: none; font-size: 1.2rem; cursor: pointer; color: #94a3b8;
+    }
+    .route-result .rr-close-btn:hover { color: #475569; }
+    /* 地图信息窗 */
+    .amap-info-content {
+      font-family: "PingFang SC", "Segoe UI", sans-serif;
+      font-size: 0.85rem; line-height: 1.5; min-width: 180px; padding: 4px;
+    }
+    .amap-info-content h3 { color: #0f766e; margin-bottom: 4px; font-size: 0.95rem; }
+    .amap-info-content .pop-desc { color: #475569; font-size: 0.78rem; margin: 4px 0; }
+    .amap-info-content .pop-ask {
       display: inline-block;
       margin-top: 6px;
       padding: 4px 12px;
@@ -596,62 +866,7 @@
       font-size: 0.72rem;
       cursor: pointer;
     }
-    .leaflet-popup-content .pop-ask:hover { background: #0f766e; }
-    .custom-marker-container {
-      background: transparent !important;
-      border: 0 !important;
-      box-shadow: none !important;
-    }
-    .custom-marker-wrapper {
-      position: relative;
-    }
-    .custom-marker {
-      width: var(--size, 32px);
-      height: calc(var(--size, 32px) * 1.25);
-      position: relative;
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      filter: drop-shadow(0 4px 8px rgba(0,0,0,0.25));
-    }
-    .custom-marker::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: var(--color, #0d9488);
-      clip-path: polygon(50% 100%, 0% 35%, 25% 0%, 75% 0%, 100% 35%);
-      border-radius: 40% 40% 60% 60%;
-    }
-    .custom-marker svg {
-      position: absolute;
-      top: 12%;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 52%;
-      height: auto;
-    }
-    .custom-marker.highlight {
-      transform: scale(1.15) translateY(-3px);
-      z-index: 1000;
-    }
-    .marker-pulse {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: var(--size, 32px);
-      height: calc(var(--size, 32px) * 1.25);
-      border-radius: 50%;
-      background: var(--color, #f59e0b);
-      opacity: 0;
-      animation: pulse 1.6s ease-out infinite;
-      transform-origin: center bottom;
-    }
-    @keyframes pulse {
-      0% { transform: scale(0.7); opacity: 0.6; }
-      70% { transform: scale(1.6); opacity: 0; }
-      100% { transform: scale(1.8); opacity: 0; }
-    }
+    .amap-info-content .pop-ask:hover { background: #0f766e; }
 
     /* 便民服务样式 */
     .service-grid {
@@ -773,188 +988,784 @@
       scrollbar-width: thin;
       scrollbar-color: #cbd5e1 transparent;
     }
+
+    /* 游记页面样式 */
+    #travelogueView {
+      overflow-y: hidden;
+      width: 100%;
+      flex: 1;
+      min-height: 0;
+      padding: 0;
+      background: rgba(255,255,255,0.95);
+      border-radius: 16px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      margin-bottom: 20px;
+      flex-direction: column;
+    }
+    #travelogueView.active { display: flex; }
+    .tg-layout {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .tg-list-panel {
+      width: 220px;
+      min-width: 220px;
+      border-right: 1px solid #e2e8f0;
+      overflow-y: auto;
+      padding: 16px 12px;
+      background: #f8fafc;
+    }
+    .tg-list-title {
+      font-size: 0.85rem;
+      color: #0f766e;
+      margin-bottom: 12px;
+      font-weight: 600;
+    }
+    .tg-list-item {
+      padding: 10px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      margin-bottom: 4px;
+      transition: all 0.15s;
+      border: 1.5px solid transparent;
+    }
+    .tg-list-item:hover { background: #e6f7f5; }
+    .tg-list-item.active { background: #ccfbf1; border-color: #0d9488; }
+    .tg-list-item .tg-li-title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #1e293b;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .tg-list-item .tg-li-meta {
+      font-size: 0.66rem;
+      color: #94a3b8;
+      margin-top: 3px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .tg-list-item .tg-li-style {
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: #f0fdfa;
+      color: #0d9488;
+      font-size: 0.62rem;
+    }
+    .tg-detail-panel {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 24px;
+      min-width: 0;
+    }
+    .tg-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    .tg-header-info { flex: 1; }
+    .tg-title {
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: #0f766e;
+      margin-bottom: 6px;
+      line-height: 1.4;
+    }
+    .tg-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      font-size: 0.72rem;
+      color: #94a3b8;
+    }
+    .tg-style-badge {
+      padding: 2px 10px;
+      border-radius: 10px;
+      background: #f0fdfa;
+      color: #0d9488;
+      font-size: 0.7rem;
+      font-weight: 500;
+    }
+    .tg-spot-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 8px;
+    }
+    .tg-spot-tag {
+      padding: 2px 8px;
+      border-radius: 8px;
+      background: #fef3c7;
+      color: #92400e;
+      font-size: 0.68rem;
+    }
+    .tg-actions {
+      display: flex;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    .tg-action-btn {
+      padding: 6px 12px;
+      border-radius: 8px;
+      border: 1.5px solid #e2e8f0;
+      background: #fff;
+      color: #475569;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .tg-action-btn:hover { border-color: #0d9488; color: #0d9488; background: #f0fdfa; }
+    .tg-action-btn.danger:hover { border-color: #ef4444; color: #ef4444; background: #fef2f2; }
+    .tg-action-btn.primary { background: #0d9488; color: #fff; border-color: #0d9488; font-weight: 600; }
+    .tg-action-btn.primary:hover { background: #0f766e; }
+    .tg-content {
+      font-size: 0.92rem;
+      line-height: 1.9;
+      color: #334155;
+    }
+    .tg-content h1 { font-size: 1.4rem; color: #0f766e; margin: 20px 0 12px; }
+    .tg-content h2 { font-size: 1.15rem; color: #0f766e; margin: 18px 0 10px; }
+    .tg-content h3 { font-size: 1rem; color: #1e293b; margin: 14px 0 8px; }
+    .tg-content p { margin: 8px 0; }
+    .tg-content strong { color: #0d9488; }
+    .tg-content ul, .tg-content ol { padding-left: 20px; margin: 8px 0; }
+    .tg-content li { margin: 4px 0; }
+    .tg-content blockquote {
+      border-left: 3px solid #0d9488;
+      padding: 6px 14px;
+      margin: 10px 0;
+      background: #f0fdfa;
+      color: #0f766e;
+      border-radius: 0 8px 8px 0;
+    }
+    .tg-content hr { border: none; border-top: 1px solid #e2e8f0; margin: 16px 0; }
+    .tg-content code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-size: 0.85em; }
+    /* 风格选择弹窗 */
+    .tg-style-modal {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.4);
+      z-index: 1000;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .tg-style-modal-content {
+      background: #fff; border-radius: 16px; padding: 24px;
+      min-width: 300px; max-width: 400px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    }
+    .tg-style-modal-content h3 { font-size: 1rem; color: #0f766e; margin-bottom: 16px; text-align: center; }
+    .tg-style-option {
+      display: block; width: 100%; padding: 12px 16px; margin-bottom: 8px;
+      border: 2px solid #e2e8f0; border-radius: 12px; background: #fff;
+      cursor: pointer; text-align: left; font-size: 0.88rem; color: #334155;
+      transition: all 0.15s;
+    }
+    .tg-style-option:hover { border-color: #0d9488; background: #f0fdfa; }
+    .tg-style-option .style-name { font-weight: 600; color: #0f766e; }
+    .tg-style-option .style-desc { font-size: 0.72rem; color: #94a3b8; margin-top: 2px; }
+    /* dark mode */
+    body.dark #travelogueView { background: rgba(30,41,59,0.95); }
+    body.dark .tg-title { color: #5eead4; }
+    body.dark .tg-content { color: #e2e8f0; }
+    body.dark .tg-content h1, body.dark .tg-content h2 { color: #5eead4; }
+    body.dark .tg-content h3 { color: #e2e8f0; }
+    body.dark .tg-content blockquote { background: #1e293b; color: #5eead4; }
+    body.dark .tg-content code { background: #334155; }
+    body.dark .tg-header { border-bottom-color: #334155; }
+    body.dark .tg-style-badge { background: #1e293b; }
+    body.dark .tg-spot-tag { background: #422006; }
+    body.dark .tg-action-btn { background: #1e293b; color: #94a3b8; border-color: #334155; }
+    body.dark .tg-action-btn:hover { background: #334155; }
+    body.dark .tg-action-btn.primary { background: #0d9488; color: #fff; }
+    body.dark .tg-action-btn.danger:hover { background: #7f1d1d; }
+    body.dark .tg-list-panel { background: #0f172a; border-right-color: #334155; }
+    body.dark .tg-list-item:hover { background: #1e293b; }
+    body.dark .tg-list-item.active { background: #1e293b; border-color: #0d9488; }
+    body.dark .tg-list-item .tg-li-title { color: #e2e8f0; }
+    body.dark .tg-list-item .tg-li-style { background: #1e293b; }
+    body.dark .tg-style-modal-content { background: #1e293b; }
+    body.dark .tg-style-option { background: #0f172a; color: #e2e8f0; border-color: #334155; }
+    body.dark .tg-style-option:hover { background: #1e293b; }
+
+    /* 通用空状态/加载样式 */
+    .tg-empty {
+      text-align: center;
+      padding: 60px 20px;
+      color: #94a3b8;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    .tg-empty-icon { font-size: 3rem; margin-bottom: 12px; }
+    .tg-empty-text { font-size: 0.9rem; }
+    .tg-loading {
+      text-align: center;
+      padding: 40px;
+      color: #0d9488;
+      font-size: 0.9rem;
+    }
+    .tg-loading .spinner {
+      display: inline-block;
+      width: 24px;
+      height: 24px;
+      border: 3px solid #e2e8f0;
+      border-top-color: #0d9488;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      vertical-align: middle;
+      margin-right: 8px;
+    }
+
+    /* 天气面板 */
+    .weather-panel {
+      padding: 10px 12px;
+      background: linear-gradient(135deg, #f0fdfa 0%, #e6f7f5 100%);
+      border-radius: 12px;
+      margin-bottom: 0;
+    }
+    .weather-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .weather-icon { font-size: 1.5rem; }
+    .weather-temp { font-size: 1.4rem; font-weight: 700; color: #0f766e; }
+    .weather-desc { font-size: 0.72rem; color: #64748b; margin: 2px 0 6px; }
+    .weather-detail { display: flex; gap: 12px; font-size: 0.68rem; color: #94a3b8; }
+    .clothing-advice {
+      margin-top: 8px;
+      padding: 8px 10px;
+      background: #fff;
+      border-radius: 8px;
+      border: 1px solid #ccfbf1;
+    }
+    .clothing-label { font-size: 0.7rem; font-weight: 600; color: #0d9488; margin-bottom: 3px; }
+    .clothing-text { font-size: 0.68rem; color: #475569; line-height: 1.5; }
+    body.dark .weather-panel { background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); }
+    body.dark .weather-temp { color: #5eead4; }
+    body.dark .weather-desc { color: #94a3b8; }
+    body.dark .clothing-advice { background: #0f172a; border-color: #334155; }
+    body.dark .clothing-label { color: #5eead4; }
+    body.dark .clothing-text { color: #cbd5e1; }
+
+    /* 停车定位 */
+    .parking-section {
+      padding: 8px 12px;
+      border-top: 1px solid #e2e8f0;
+      margin-top: auto;
+    }
+    .parking-btn {
+      width: 100%;
+      padding: 8px;
+      border-radius: 8px;
+      border: 1.5px dashed #0d9488;
+      background: #f0fdfa;
+      color: #0d9488;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: all 0.15s;
+      font-weight: 500;
+    }
+    .parking-btn:hover { background: #ccfbf1; }
+    .parking-info { margin-top: 6px; }
+    .parking-status { font-size: 0.7rem; color: #10b981; display: block; margin-bottom: 4px; }
+    .parking-actions { display: flex; gap: 6px; }
+    .parking-nav-btn {
+      flex: 1;
+      padding: 6px;
+      border-radius: 6px;
+      border: 1px solid #0d9488;
+      background: #0d9488;
+      color: #fff;
+      font-size: 0.72rem;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .parking-clear-btn {
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid #e2e8f0;
+      background: #fff;
+      color: #94a3b8;
+      font-size: 0.7rem;
+      cursor: pointer;
+    }
+    body.dark .parking-section { border-top-color: #334155; }
+    body.dark .parking-btn { background: #1e293b; border-color: #0d9488; }
+    body.dark .parking-clear-btn { background: #0f172a; }
+
+    /* 拍照点页面 */
+    #photoSpotView {
+      overflow-y: auto;
+      width: 100%;
+      flex: 1;
+      min-height: 0;
+      padding: 20px 24px;
+      background: rgba(255,255,255,0.95);
+      border-radius: 16px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      margin-bottom: 20px;
+    }
+    .ps-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .ps-card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 14px 16px;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+      transition: all 0.15s;
+    }
+    .ps-card:hover { border-color: #0d9488; box-shadow: 0 2px 8px rgba(13,148,136,0.1); }
+    .ps-card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .ps-card-icon { font-size: 1.3rem; }
+    .ps-card-name {
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: #0f766e;
+      flex: 1;
+    }
+    .ps-card-locate {
+      font-size: 0.68rem;
+      color: #0d9488;
+      cursor: pointer;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: #f0fdfa;
+      border: 1px solid #ccfbf1;
+      transition: all 0.15s;
+    }
+    .ps-card-locate:hover { background: #ccfbf1; }
+    .ps-photo-items { display: flex; flex-direction: column; gap: 8px; }
+    .ps-photo-item {
+      background: #f8fafc;
+      border-radius: 8px;
+      padding: 10px 12px;
+      border-left: 3px solid #0d9488;
+    }
+    .ps-photo-tip {
+      font-size: 0.78rem;
+      color: #334155;
+      line-height: 1.5;
+      margin-bottom: 4px;
+    }
+    .ps-photo-meta {
+      display: flex;
+      gap: 12px;
+      font-size: 0.66rem;
+      color: #94a3b8;
+    }
+    body.dark #photoSpotView { background: rgba(30,41,59,0.95); }
+    body.dark .ps-card { background: #0f172a; border-color: #334155; }
+    body.dark .ps-card-name { color: #5eead4; }
+    body.dark .ps-card-locate { background: #1e293b; }
+    body.dark .ps-photo-item { background: #1e293b; border-left-color: #0d9488; }
+    body.dark .ps-photo-tip { color: #e2e8f0; }
   </style>
+  <!-- i18n 多语言 -->
+  <script>
+    const I18N = {
+      locale: localStorage.getItem('tour_lang') || 'zh',
+      data: {},
+      async init() {
+        try {
+          const res = await fetch(`./i18n/${this.locale}.json`);
+          this.data = await res.json();
+        } catch(e) { this.data = {}; }
+        this.applyAll();
+      },
+      t(key, params) {
+        let text = this.data[key] || key;
+        if (params) {
+          Object.keys(params).forEach(k => { text = text.replace(`{${k}}`, params[k]); });
+        }
+        return text;
+      },
+      applyAll() {
+        document.querySelectorAll('[data-i18n]').forEach(el => {
+          const key = el.dataset.i18n;
+          const attr = el.dataset.i18nAttr || 'textContent';
+          if (attr === 'textContent') el.textContent = this.t(key);
+          else if (attr === 'placeholder') el.placeholder = this.t(key);
+          else if (attr === 'title') el.title = this.t(key);
+          else if (attr === 'value') el.value = this.t(key);
+          else el.setAttribute(attr, this.t(key));
+        });
+        document.querySelectorAll('[data-i18n-html]').forEach(el => {
+          const key = el.dataset.i18nHtml;
+          el.innerHTML = this.t(key);
+        });
+        document.title = this.t('pageTitle');
+      },
+      async switchLocale(loc) {
+        this.locale = loc;
+        localStorage.setItem('tour_lang', loc);
+        try {
+          const res = await fetch(`./i18n/${loc}.json`);
+          this.data = await res.json();
+        } catch(e) { this.data = {}; }
+        this.applyAll();
+        // Re-render dynamic content
+        if (typeof initRouteSpotTags === 'function') initRouteSpotTags();
+        if (typeof setAvatarState === 'function') setAvatarState('idle');
+        if (typeof loadWeather === 'function') loadWeather();
+        if (typeof loadPhotoSpots === 'function') { photoSpotsData = []; loadPhotoSpots(); }
+      }
+    };
+  </script>
 </head>
 <body>
   <!-- 登录视图 -->
   <div id="loginView">
     <div class="login-card">
       <div class="login-logo">🌄</div>
-      <h2 class="login-title">灵山胜境 · AI 数字人导览</h2>
-      <p class="login-subtitle">智能导览，畅游灵山</p>
+      <h2 class="login-title" data-i18n="loginTitle"></h2>
+      <p class="login-subtitle" data-i18n="loginSubtitle"></p>
       <form class="login-form" id="loginForm">
         <div class="form-group">
-          <label for="username">用户名</label>
-          <input type="text" id="username" placeholder="请输入用户名" required />
+          <label for="username" data-i18n="username"></label>
+          <input type="text" id="username" placeholder=" " data-i18n="usernamePlaceholder" data-i18n-attr="placeholder" required />
         </div>
-        <div class="form-group">
-          <label for="password">密码</label>
-          <input type="password" id="password" placeholder="请输入密码" required />
+        <div class="form-group pwd-group">
+          <label for="password" data-i18n="password"></label>
+          <input type="password" id="password" placeholder=" " data-i18n="passwordPlaceholder" data-i18n-attr="placeholder" required />
+          <button type="button" class="pwd-toggle" id="pwdToggleBtn" title="显示密码">👁️</button>
         </div>
-        <button type="submit" class="login-btn" id="loginBtn">登录</button>
+        <button type="submit" class="login-btn" id="loginBtn">
+          <span class="btn-spinner"></span><span class="btn-text" data-i18n="loginBtn"></span>
+        </button>
         <div class="login-error" id="loginError"></div>
       </form>
       <div class="login-tip">
-        测试账号：<code>user</code> / <code>123456</code>
+        <span data-i18n="testAccount"></span><code>user</code> / <code>123456</code>
       </div>
     </div>
   </div>
 
   <!-- 主应用视图 -->
   <div id="mainApp" style="display: none;">
-    <button class="sidebar-toggle" id="sidebarToggle" title="展开菜单">☰</button>
+    <button class="sidebar-toggle" id="sidebarToggle" data-i18n="expandMenu" data-i18n-attr="title">☰</button>
     <div class="app-layout">
       <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
-          <h2>🌄 灵山胜境</h2>
-          <div class="user-name" id="sidebarUserName">游客</div>
-          <button class="logout-sidebar-btn" id="logoutBtn">退出登录</button>
+          <h2>🌄 <span data-i18n="siteName"></span></h2>
+          <div class="user-name" id="sidebarUserName"><span data-i18n="tourist"></span></div>
+          <button class="logout-sidebar-btn" id="logoutBtn"><span data-i18n="logout"></span></button>
         </div>
 
         <nav class="sidebar-nav">
-          <button class="sidebar-nav-btn primary" id="newChatBtn">➕ 新建对话</button>
-          <button class="sidebar-nav-btn nav active" data-view="chatView" id="navChatBtn">💬 AI 导览员</button>
-          <button class="sidebar-nav-btn nav" data-view="serviceView" id="navServiceBtn">🛎️ 便民服务</button>
-          <button class="sidebar-nav-btn nav" data-view="mapView" id="navMapBtn">🗺️ 景区地图</button>
+          <button class="sidebar-nav-btn primary" id="newChatBtn">➕ <span data-i18n="newChat"></span></button>
+          <button class="sidebar-nav-btn nav active" data-view="chatView" id="navChatBtn">💬 <span data-i18n="aiGuide"></span></button>
+          <button class="sidebar-nav-btn nav" data-view="serviceView" id="navServiceBtn">🛎️ <span data-i18n="services"></span></button>
+          <button class="sidebar-nav-btn nav" data-view="mapView" id="navMapBtn">🗺️ <span data-i18n="map"></span></button>
+          <button class="sidebar-nav-btn nav" data-view="photoSpotView" id="navPhotoSpotBtn">📸 <span data-i18n="photoSpot"></span></button>
+          <button class="sidebar-nav-btn nav" data-view="travelogueView" id="navTravelogueBtn">📝 <span data-i18n="travelogue"></span></button>
         </nav>
 
         <hr class="sidebar-divider" />
 
+        <!-- 天气面板 -->
+        <div class="weather-panel" id="weatherPanel">
+          <div class="weather-header">
+            <span class="weather-icon" id="weatherIcon">☀️</span>
+            <span class="weather-temp" id="weatherTemp">--°C</span>
+          </div>
+          <div class="weather-desc" id="weatherDesc">--</div>
+          <div class="weather-detail" id="weatherDetail">
+            <span>🌡️ <span data-i18n="weatherFeelsLike"></span> <span id="weatherFeel">--</span></span>
+            <span>💧 <span id="weatherHumidity">--</span></span>
+          </div>
+          <div class="clothing-advice" id="clothingAdvice" style="display:none;">
+            <div class="clothing-label">👗 <span data-i18n="clothing"></span></div>
+            <div class="clothing-text" id="clothingText"></div>
+          </div>
+        </div>
+
+        <hr class="sidebar-divider" />
+
         <div class="sidebar-history" id="sidebarHistory">
-          <h3>📋 历史对话</h3>
+          <h3>📋 <span data-i18n="history"></span></h3>
           <div class="history-list" id="historyList">
-            <div class="history-empty">暂无对话记录</div>
+            <div class="history-empty"><span data-i18n="noHistory"></span></div>
+          </div>
+        </div>
+        <div class="parking-section" id="parkingSection">
+          <button class="parking-btn" id="parkingSaveBtn">🅿️ <span data-i18n="parkingSave"></span></button>
+          <div class="parking-info" id="parkingInfo" style="display:none;">
+            <span class="parking-status">✅ <span data-i18n="parkingSaveSuccess"></span></span>
+            <div class="parking-actions">
+              <button class="parking-nav-btn" id="parkingGoBtn">🧭 <span data-i18n="parkingGoBack"></span></button>
+              <button class="parking-clear-btn" id="parkingClearBtn">✕ <span data-i18n="parkingClear"></span></button>
+            </div>
           </div>
         </div>
       </aside>
 
       <div class="main-content">
         <div class="page-title-bar" style="position:relative;">
-          <h1>灵山胜境 · AI 数字人导览</h1>
-          <p>灵山大佛、梵宫、九龙灌浴、拈花湾 — 语音或文字随时问</p>
-          <button class="settings-btn" id="settingsBtn" title="设置">⚙️</button>
+          <h1 data-i18n="headerTitle"></h1>
+          <p data-i18n="headerSubtitle"></p>
+          <button class="settings-btn" id="settingsBtn" data-i18n="settings" data-i18n-attr="title">⚙️</button>
         </div>
         <main>
-          <div class="view active" id="chatView">
-            <div class="avatar-section">
-              <div class="avatar-canvas-wrap">
-                <canvas id="avatarCanvas" width="144" height="144"></canvas>
+          <div class="chat-main">
+            <div class="view active" id="chatView">
+              <div class="avatar-section">
+                <div class="avatar-icon-wrap">
+                  <span class="avatar-icon">🤖</span>
+                </div>
+                <div style="flex:1;">
+                  <div class="avatar-label"><span data-i18n="avatarName"></span></div>
+                  <div class="status-text" id="avatarStatus"><span data-i18n="avatarIdle"></span></div>
+                </div>
               </div>
-              <div style="flex:1;">
-                <div class="avatar-label">灵山数字导览员</div>
-                <div class="status-text" id="avatarStatus">您好，请问有什么可以帮您？</div>
+              <div class="interest-tags" id="interestTags"></div>
+              <div class="chat-box" id="chatBox"></div>
+              <div class="status" id="status"></div>
+              <div class="image-preview-wrap" id="imagePreviewWrap">
+                <img class="image-preview" id="imagePreview" src="" alt="预览" />
+                <button class="image-preview-remove" id="imageRemoveBtn">✕</button>
+              </div>
+              <div class="input-area">
+                <button class="btn-icon btn-voice" id="voiceBtn" data-i18n="voiceBtnTitle" data-i18n-attr="title">🎤</button>
+                <input type="text" id="textInput" placeholder=" " data-i18n="inputPlaceholder" data-i18n-attr="placeholder" />
+                <button class="btn-icon btn-image" id="imageBtn" title="上传图片">📷</button>
+                <button class="btn-icon btn-send" id="sendBtn" data-i18n="sendBtnTitle" data-i18n-attr="title">➤</button>
+                <input type="file" id="imageInput" accept="image/*" style="display:none" />
               </div>
             </div>
-            <div class="interest-tags" id="interestTags"></div>
-            <div class="chat-box" id="chatBox"></div>
-            <div class="status" id="status"></div>
-            <div class="input-area">
-              <button class="btn-icon btn-voice" id="voiceBtn" title="按住说话">🎤</button>
-              <input type="text" id="textInput" placeholder="输入问题，或按住麦克风说话..." />
-              <button class="btn-icon btn-send" id="sendBtn" title="发送">➤</button>
-            </div>
-          </div>
 
-          <div class="view" id="mapView">
-            <div id="mapContainer"></div>
-          </div>
-
-          <div class="view" id="serviceView">
-            <div class="service-grid" id="serviceGrid">
-              <div class="service-loading">加载中...</div>
+            <div class="view" id="mapView">
+              <div class="route-bar">
+                <button class="route-plan-btn" id="routePlanBtn">🧭 <span data-i18n="routePlanBtn"></span></button>
+              </div>
+              <!-- 路线规划面板 -->
+              <div class="route-panel" id="routePanel">
+                <button class="rp-close-btn" id="rpCloseBtn">✕</button>
+                <h3>🧭 <span data-i18n="routePlanTitle"></span></h3>
+                <div>
+                  <div class="rp-label" data-i18n="routePreference"></div>
+                  <select id="rpPreference">
+                    <option value="general" data-i18n="prefGeneral"></option>
+                    <option value="culture" data-i18n="prefCulture"></option>
+                    <option value="photo" data-i18n="prefPhoto"></option>
+                    <option value="zen" data-i18n="prefZen"></option>
+                    <option value="family" data-i18n="prefFamily"></option>
+                  </select>
+                </div>
+                <div>
+                  <div class="rp-label" data-i18n="routeDuration"></div>
+                  <select id="rpDuration">
+                    <option value="1h" data-i18n="dur1h"></option>
+                    <option value="2h" data-i18n="dur2h"></option>
+                    <option value="half_day" selected data-i18n="durHalfDay"></option>
+                    <option value="full_day" data-i18n="durFullDay"></option>
+                  </select>
+                </div>
+                <div>
+                  <div class="rp-label" data-i18n="spotSelectLabel"></div>
+                  <div class="rp-spot-tags" id="rpSpotTags"></div>
+                </div>
+                <button class="rp-generate-btn" id="rpGenerateBtn">✨ <span data-i18n="generateRoute"></span></button>
+                <div class="rp-loading" id="rpLoading" style="display:none;">
+                  <span class="spinner"></span><span data-i18n="aiPlanning"></span>
+                </div>
+              </div>
+              <!-- 路线结果 -->
+              <div class="route-result" id="routeResult">
+                <button class="rr-close-btn" id="rrCloseBtn">✕</button>
+                <h3 id="rrTitle"></h3>
+                <div class="rr-tips" id="rrTips"></div>
+                <div id="rrSpotList"></div>
+                <button class="rr-start-btn" id="rrStartBtn">▶ <span data-i18n="startGuide"></span></button>
+              </div>
+              <div id="mapContainer"></div>
             </div>
-          </div>
 
-          <div class="view" id="settingsView">
-            <div class="settings-header">
-              <button class="back-btn" id="backFromSettingsBtn">←</button>
-              <h2>设置</h2>
+            <div class="view" id="serviceView">
+              <div class="service-grid" id="serviceGrid">
+                <div class="service-loading" data-i18n="loading"></div>
+              </div>
             </div>
-            <div class="settings-content">
-              <div class="settings-section">
-                <h3>🎤 语音设置</h3>
-                <div class="setting-row">
-                  <label>TTS 语速</label>
-                  <select id="settTtsSpeed">
-                    <option value="slow">慢速</option>
-                    <option value="medium" selected>正常</option>
-                    <option value="fast">快速</option>
+
+            <div class="view" id="settingsView">
+              <div class="settings-header">
+                <button class="back-btn" id="backFromSettingsBtn">←</button>
+                <h2 data-i18n="settingsTitle"></h2>
+              </div>
+              <div class="settings-content">
+                <div class="settings-section">
+                  <h3>🎤 <span data-i18n="voiceSettings"></span></h3>
+                  <div class="setting-row">
+                    <label data-i18n="ttsSpeed"></label>
+                    <select id="settTtsSpeed">
+                      <option value="slow" data-i18n="slow"></option>
+                    <option value="medium" selected data-i18n="normal"></option>
+                    <option value="fast" data-i18n="fast"></option>
                   </select>
                 </div>
                 <div class="setting-row">
-                  <label>语音音色</label>
+                  <label data-i18n="ttsVoice"></label>
                   <select id="settTtsVoice">
-                    <option value="zh-CN-XiaoxiaoNeural">晓晓 (温柔女声)</option>
-                    <option value="zh-CN-YunxiNeural">云希 (阳光男声)</option>
-                    <option value="zh-CN-YunjianNeural">云健 (沉稳男声)</option>
-                    <option value="zh-CN-XiaoyiNeural">晓伊 (亲切女声)</option>
+                    <option value="zh-CN-XiaoxiaoNeural" data-i18n="voiceXiaoxiao"></option>
+                    <option value="zh-CN-XiaoyiNeural" data-i18n="voiceXiaoyi"></option>
                   </select>
                 </div>
               </div>
 
               <div class="settings-section">
-                <h3>🤖 数字人动画</h3>
+                <h3 data-i18n="avatarSettings"></h3>
                 <div class="setting-row switch">
-                  <label>数字人动画</label>
+                  <label data-i18n="avatarToggle"></label>
                   <input type="checkbox" id="settAvatarAnim" checked />
                 </div>
-                <div class="setting-hint">关闭后数字人保持静态，可节省设备性能</div>
+                <div class="setting-hint"><span data-i18n="avatarHint"></span></div>
               </div>
 
               <div class="settings-section">
-                <h3>🎯 兴趣偏好预设</h3>
+                <h3 data-i18n="interestSettings"></h3>
                 <div class="setting-row">
-                  <label>默认兴趣标签</label>
+                  <label data-i18n="interestLabel"></label>
                   <select id="settInterest">
-                    <option value="general">综合</option>
-                    <option value="history">历史人文</option>
-                    <option value="nature">自然风光</option>
-                    <option value="family">亲子同游</option>
-                    <option value="quick">高效速览</option>
+                    <option value="general" data-i18n="interestGeneral"></option>
+                    <option value="history" data-i18n="interestHistory"></option>
+                    <option value="nature" data-i18n="interestNature"></option>
+                    <option value="family" data-i18n="interestFamily"></option>
+                    <option value="quick" data-i18n="interestQuick"></option>
                   </select>
                 </div>
-                <div class="setting-hint">每次新建对话将自动使用此偏好</div>
+                <div class="setting-hint"><span data-i18n="interestHint"></span></div>
               </div>
 
               <div class="settings-section">
-                <h3>🎨 界面主题</h3>
+                <h3 data-i18n="themeSettings"></h3>
                 <div class="setting-row">
-                  <label>主题模式</label>
+                  <label data-i18n="themeMode"></label>
                   <select id="settTheme">
-                    <option value="light">浅色模式</option>
-                    <option value="dark">深色模式</option>
-                    <option value="auto">跟随系统</option>
+                    <option value="light" data-i18n="themeLight"></option>
+                    <option value="dark" data-i18n="themeDark"></option>
+                    <option value="auto" data-i18n="themeAuto"></option>
                   </select>
                 </div>
               </div>
 
               <div class="settings-section">
-                <h3>🔤 字体大小</h3>
+                <h3 data-i18n="fontSettings"></h3>
                 <div class="setting-row">
-                  <label>聊天文字</label>
+                  <label data-i18n="fontLabel"></label>
                   <select id="settFontSize">
-                    <option value="normal">普通</option>
-                    <option value="large">大</option>
-                    <option value="xlarge">特大</option>
+                    <option value="normal" data-i18n="fontNormal"></option>
+                    <option value="large" data-i18n="fontLarge"></option>
+                    <option value="xlarge" data-i18n="fontXLarge"></option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="settings-section">
+                <h3>🌐 语言 / Language</h3>
+                <div class="setting-row">
+                  <label>语言选择</label>
+                  <select id="settLang">
+                    <option value="zh">中文</option>
+                    <option value="en">English</option>
+                    <option value="ja">日本語</option>
+                    <option value="ko">한국어</option>
                   </select>
                 </div>
               </div>
 
               <div class="settings-section danger">
-                <h3>🗑️ 数据管理</h3>
-                <button class="danger-btn" id="settClearHistory">清空对话历史</button>
-                <div class="setting-hint">将清除所有本地会话记录和聊天数据，不可恢复</div>
+                <h3 data-i18n="dataSettings"></h3>
+                <button class="danger-btn" id="settClearHistory" data-i18n="clearHistory"></button>
+                <div class="setting-hint"><span data-i18n="clearHistoryHint"></span></div>
               </div>
             </div>
+          </div>
+
+          <!-- 拍照点推荐页面 -->
+          <div class="view" id="photoSpotView">
+            <div class="tg-loading" id="psLoading" style="display:none;">
+              <span class="spinner"></span><span data-i18n="photoSpotLoading">加载中...</span>
+            </div>
+            <div class="tg-empty" id="psEmpty" style="display:none;">
+              <div class="tg-empty-icon">📸</div>
+              <div class="tg-empty-text" data-i18n="photoSpotNoData"></div>
+            </div>
+            <div class="ps-list" id="psList"></div>
+          </div>
+
+          <!-- 游记页面 -->
+          <div class="view" id="travelogueView">
+            <div class="tg-layout">
+              <div class="tg-list-panel">
+                <div class="tg-list-title" data-i18n="travelogue"></div>
+                <div id="tgList"></div>
+              </div>
+              <div class="tg-detail-panel">
+                <div class="tg-empty" id="tgEmpty">
+                  <div class="tg-empty-icon">📝</div>
+                  <div class="tg-empty-text" data-i18n="travelogueEmpty"></div>
+                </div>
+                <div class="tg-loading" id="tgLoading" style="display:none;">
+                  <span class="spinner"></span><span data-i18n="travelogueGenerating"></span>
+                </div>
+                <div id="tgDetail" style="display:none;">
+                  <div class="tg-header">
+                    <div class="tg-header-info">
+                      <h2 class="tg-title" id="tgTitle"></h2>
+                      <div class="tg-meta">
+                        <span id="tgDate"></span>
+                        <span class="tg-style-badge" id="tgStyleBadge"></span>
+                        <span class="tg-source" data-i18n="travelogueSource"></span>
+                      </div>
+                      <div class="tg-spot-tags" id="tgSpotTags"></div>
+                    </div>
+                    <div class="tg-actions">
+                      <button class="tg-action-btn primary" id="tgRegenerateBtn" data-i18n="travelogueRegenerate"></button>
+                      <button class="tg-action-btn" id="tgCopyBtn" data-i18n="travelogueExport"></button>
+                      <button class="tg-action-btn danger" id="tgDeleteBtn" data-i18n="travelogueDelete"></button>
+                    </div>
+                  </div>
+                  <div class="tg-content" id="tgContent"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          </div><!-- /chat-main -->
+
+          <!-- Live2D 数字人面板 -->
+          <div class="live2d-panel" id="live2dPanel">
+            <div class="live2d-header">
+              <h3 data-i18n="live2dTitle"></h3>
+              <p data-i18n="live2dSubtitle"></p>
+            </div>
+            <div class="live2d-container" id="live2dContainer"></div>
           </div>
         </main>
       </div>
     </div>
   </div> <!-- 主应用视图结束 -->
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const API_BASE = 'https://web-production-29186.up.railway.app';
+    const API_BASE = 'http://localhost:8000';
     let sessionId = localStorage.getItem('tour_session_id') || null;
     let currentInterest = localStorage.getItem('tour_interest') || 'general';
     let currentQuestion = null; // 当前问答的问题，供反馈按钮使用
@@ -965,19 +1776,69 @@
     let currentUser = null;
 
     const chatBox = document.getElementById('chatBox');
+
+    let toastTimer = null;
+    function showToast(msg, isError = false) {
+      let el = document.getElementById('toastEl');
+      if (!el) {
+        el = document.createElement('div');
+        el.id = 'toastEl';
+        el.className = 'toast';
+        document.body.appendChild(el);
+      }
+      clearTimeout(toastTimer);
+      el.textContent = msg;
+      el.className = 'toast' + (isError ? ' error' : '');
+      requestAnimationFrame(() => el.classList.add('show'));
+      toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
+    }
+
+    let pendingImage = null; // { base64: string, dataUrl: string }
+
+    // 图片上传
+    document.getElementById('imageBtn').addEventListener('click', () => {
+      document.getElementById('imageInput').click();
+    });
+    document.getElementById('imageInput').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      if (file.size > 10 * 1024 * 1024) { showToast('图片大小不能超过 10MB', true); return; }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result;
+        const base64 = dataUrl.split(',')[1];
+        pendingImage = { base64, dataUrl };
+        document.getElementById('imagePreview').src = dataUrl;
+        document.getElementById('imagePreviewWrap').classList.add('show');
+        document.getElementById('imageBtn').classList.add('has-image');
+      };
+      reader.readAsDataURL(file);
+    });
+    document.getElementById('imageRemoveBtn').addEventListener('click', () => {
+      pendingImage = null;
+      document.getElementById('imagePreview').src = '';
+      document.getElementById('imagePreviewWrap').classList.remove('show');
+      document.getElementById('imageBtn').classList.remove('has-image');
+      document.getElementById('imageInput').value = '';
+    });
     const statusEl = document.getElementById('status');
     const textInput = document.getElementById('textInput');
 
     // ==================== 登录功能 ====================
     async function handleLogin(e) {
       e.preventDefault();
-      const username = document.getElementById('username').value;
+      const username = document.getElementById('username').value.trim();
       const password = document.getElementById('password').value;
       const loginBtn = document.getElementById('loginBtn');
       const loginError = document.getElementById('loginError');
 
-      loginBtn.disabled = true;
       loginError.classList.remove('show');
+
+      if (!username) { loginError.textContent = I18N.t('loginEmptyUser'); loginError.classList.add('show'); return; }
+      if (!password) { loginError.textContent = I18N.t('loginEmptyPwd'); loginError.classList.add('show'); return; }
+
+      loginBtn.disabled = true;
+      loginBtn.classList.add('loading');
 
       try {
         const res = await fetch(`${API_BASE}/auth/login`, {
@@ -988,7 +1849,7 @@
 
         const data = await res.json();
         if (!res.ok) {
-          throw new Error(data.detail || '登录失败');
+          throw new Error(data.detail || I18N.t('loginFailed'));
         }
 
         currentUser = data.user;
@@ -1005,6 +1866,7 @@
         loginError.classList.add('show');
       } finally {
         loginBtn.disabled = false;
+        loginBtn.classList.remove('loading');
       }
     }
 
@@ -1045,15 +1907,25 @@
       loadSettings();
       loadInterests();
       loadHistory();
-      addMessage('bot', '您好！我是灵山胜境 AI 数字人导览员 👋\n您可以问我：灵山大佛与梵宫、九龙灌浴场次、游览路线推荐、拈花湾夜游、门票交通等。\n试试上方兴趣标签，我会根据您的偏好提供个性化讲解！\n点击左侧「🗺️ 景区地图」查看景点分布哦！');
+      addMessage('bot', I18N.t('welcomeMsg'));
+      // Live2D removed
     }
 
     document.getElementById('loginForm').addEventListener('submit', handleLogin);
-    document.addEventListener('DOMContentLoaded', checkAuth);
-    document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('pwdToggleBtn').addEventListener('click', () => {
+      const pwd = document.getElementById('password');
+      const btn = document.getElementById('pwdToggleBtn');
+      if (pwd.type === 'password') { pwd.type = 'text'; btn.textContent = '🙈'; }
+      else { pwd.type = 'password'; btn.textContent = '👁️'; }
+    });
+    document.addEventListener('DOMContentLoaded', async () => {
+      await I18N.init();
       const logoutBtn = document.getElementById('logoutBtn');
       if (logoutBtn) {
         logoutBtn.addEventListener('click', handleLogout);
+      }
+      if (checkAuth()) {
+        setTimeout(initLive2D, 500);
       }
     });
     const voiceBtn = document.getElementById('voiceBtn');
@@ -1065,7 +1937,6 @@
     let ttsAbortController = null;
     let ttsGeneration = 0;
     let chatAbortController = null;
-    let avatarAnimId = null;
 
     const getVoice = () => (typeof appSettings !== 'undefined' ? appSettings.ttsVoice : null) || localStorage.getItem('tour_voice') || 'zh-CN-XiaoxiaoNeural';
 
@@ -1077,31 +1948,36 @@
       if (currentAudioUrl) { URL.revokeObjectURL(currentAudioUrl); currentAudioUrl = null; }
     }
 
-    // ==================== 景点坐标数据 ====================
+    // ==================== 景点坐标数据（高德 GCJ-02 坐标） ====================
     const SPOTS = [
-      { id: "LS-001", name: "灵山大照壁", lat: 31.4245, lng: 120.0956, desc: "华夏第一壁，赵朴初题写「灵山胜境」，景区入口标志性打卡点。", icon: "🏛️" },
-      { id: "LS-002", name: "五明桥", lat: 31.4238, lng: 120.0952, desc: "五座汉白玉石拱桥，代表佛教五种智慧，横跨香水海。", icon: "🌉" },
-      { id: "LS-003", name: "佛足坛", lat: 31.4233, lng: 120.0948, desc: "复刻佛祖脚印，足心32种吉祥图案，朝圣祈福核心节点。", icon: "👣" },
-      { id: "LS-004", name: "五智门", lat: 31.4230, lng: 120.0945, desc: "高16.8米石牌坊，五门六柱，象征五方五佛与六度波罗蜜。", icon: "⛩️" },
-      { id: "LS-005", name: "菩提大道", lat: 31.4227, lng: 120.0943, desc: "长约250米禅意步道，两侧印度菩提树成荫，通九龙灌浴。", icon: "🌳" },
-      { id: "LS-006", name: "九龙灌浴", lat: 31.4220, lng: 120.0938, desc: "大型音乐动态群雕，太子佛从莲花中升起，九龙喷水沐浴。演出：10:00/11:30/13:30/15:00。", icon: "⛲" },
-      { id: "LS-007", name: "降魔浮雕", lat: 31.4217, lng: 120.0935, desc: "长26米巨型石雕，生动再现佛陀战胜魔王诱惑、觉悟成道的故事。", icon: "🗿" },
-      { id: "LS-008", name: "阿育王柱", lat: 31.4215, lng: 120.0932, desc: "高16.9米花岗岩石柱，复刻古印度阿育王石柱，柱头四狮朝向四方。", icon: "🪨" },
-      { id: "LS-009", name: "百子戏弥勒", lat: 31.4213, lng: 120.0930, desc: "9吨青铜群雕，弥勒袒胸露腹，百名孩童攀爬嬉戏，摸肚皮祈福。", icon: "🧸" },
-      { id: "LS-010", name: "祥符禅寺", lat: 31.4210, lng: 120.0928, desc: "唐代千年古刹，玄奘弟子窥基大师开坛，六角古井与千年银杏。", icon: "🏯" },
-      { id: "LS-011", name: "灵山大佛", lat: 31.4208, lng: 120.0925, desc: "高88米青铜释迦牟尼立像，含台基总高101.5米，725吨铜，世界最高露天青铜佛像。", icon: "🗽" },
-      { id: "LS-012", name: "佛教文化博览馆", lat: 31.4206, lng: 120.0923, desc: "三层展厅，含五方五佛展、世界佛教史、万佛殿（9999尊小佛）。", icon: "🏛️" },
-      { id: "LS-013", name: "灵山梵宫", lat: 31.4204, lng: 120.0908, desc: "「东方卢浮宫」，72000㎡艺术殿堂。东阳木雕、琉璃、星空穹顶。《吉祥颂》演出：10:35/11:30/14:00/16:00。", icon: "🕌" },
-      { id: "LS-014", name: "五印坛城", lat: 31.4198, lng: 120.0905, desc: "「小布达拉宫」，藏式五层碉楼，108个转经筒，白墙红边金顶。", icon: "🏔️" },
-      { id: "LS-015", name: "曼飞龙塔", lat: 31.4202, lng: 120.0915, desc: "南传佛教白塔，九塔组合，复刻西双版纳曼飞龙白塔，异域风情。", icon: "🕌" },
-      { id: "LS-016", name: "无尽意斋", lat: 31.4200, lng: 120.0920, desc: "赵朴初先生纪念馆，北京四合院风格，书法真迹、灵山渊源展。", icon: "🏡" },
-      { id: "NH-001", name: "拈花广场", lat: 31.4090, lng: 120.1040, desc: "拈花湾入口，拈花微笑雕塑，开园仪式9:30，夜间灯光秀。", icon: "🌸" },
-      { id: "NH-002", name: "梵天花海", lat: 31.4078, lng: 120.1020, desc: "30000㎡四季花海，格桑花、波斯菊、硫华菊，木质步道贯穿。", icon: "🌻" },
-      { id: "NH-003", name: "香月花街", lat: 31.4080, lng: 120.1035, desc: "800米禅意商业街，文创、非遗手作、禅茶、小吃，夜间灯笼。", icon: "🏮" },
-      { id: "NH-004", name: "拈花堂", lat: 31.4085, lng: 120.1045, desc: "静心禅堂，禅坐、抄经、禅茶品鉴，免费体验。讲座10:30/15:30。", icon: "🧘" },
-      { id: "NH-005", name: "五灯湖", lat: 31.4075, lng: 120.1030, desc: "5000㎡湖景，《禅行》灯光秀19:00/20:00，湖心亭栈道漫步。", icon: "🌊" },
-      { id: "NH-006", name: "鹿鸣谷", lat: 31.4070, lng: 120.1010, desc: "20000㎡山林幽谷，90%植被覆盖，香樟松柏翠竹，远离喧嚣。", icon: "🦌" },
+      { id: "LS-001", name: "灵山大照壁", lat: 31.421388, lng: 120.102499, desc: "华夏第一壁，赵朴初题写「灵山胜境」，景区入口标志性打卡点。", desc_en: "China's No.1 Screen Wall, entrance landmark of Lingshan.", desc_ja: "中国一の大照壁、「霊山勝境」の題字、景勝地入口の象徴。", desc_ko: "중국 제일의 대조벽, '영산승경' 제자, 명승지 입구의 랜드마크.", icon: "🏛️" },
+      { id: "LS-002", name: "五明桥", lat: 31.421749, lng: 120.102248, desc: "五座汉白玉石拱桥，代表佛教五种智慧，横跨香水海。", desc_en: "Five white marble arch bridges representing five Buddhist wisdoms.", desc_ja: "五つの漢白玉のアーチ橋、仏教の五智を表し、香水海に架かる。", desc_ko: "다섯 개의 한백옥 아치교, 불교의 다섯 가지 지혜를 상징.", icon: "🌉" },
+      { id: "LS-003", name: "佛足坛", lat: 31.422725, lng: 120.101497, desc: "复刻佛祖脚印，足心32种吉祥图案，朝圣祈福核心节点。", desc_en: "Replica of Buddha's footprints with 32 auspicious symbols.", desc_ja: "仏足のレプリカ、足裏に32の吉祥文様、巡礼の中心地。", desc_ko: "부처님 발자국 복제, 발바닥 32개 길상 문양, 순례 기도 중심지.", icon: "👣" },
+      { id: "LS-004", name: "五智门", lat: 31.423055, lng: 120.101292, desc: "高16.8米石牌坊，五门六柱，象征五方五佛与六度波罗蜜。", desc_en: "16.8m stone archway representing Five Buddhas and Six Paramitas.", desc_ja: "高さ16.8mの石牌坊、五門六柱、五方五仏と六波羅蜜を象徴。", desc_ko: "16.8m 석패방, 오문육주, 오방오불과 육바라밀을 상징.", icon: "⛩️" },
+      { id: "LS-005", name: "菩提大道", lat: 31.423182, lng: 120.101143, desc: "长约250米禅意步道，两侧印度菩提树成荫，通九龙灌浴。", desc_en: "250m zen path lined with Bodhi trees leading to Nine Dragons Bath.", desc_ja: "約250mの禅の歩道、両側にインド菩提樹が並び、九龍灌浴へ通じる。", desc_ko: "약 250m 선의 산책로, 양쪽 인도 보리수 가로수, 구룡관욕으로 통함.", icon: "🌳" },
+      { id: "LS-006", name: "九龙灌浴", lat: 31.424601, lng: 120.099984, desc: "大型音乐动态群雕，太子佛从莲花中升起，九龙喷水沐浴。演出：10:00/11:30/13:30/15:00。", desc_en: "Grand musical fountain show with Buddha emerging from lotus. Shows: 10:00/11:30/13:30/15:00.", desc_ja: "大型音楽噴水ショー、太子仏が蓮華から出現。公演：10:00/11:30/13:30/15:00。", desc_ko: "대형 음악 분수 쇼, 태자불이 연꽃에서 출현. 공연: 10:00/11:30/13:30/15:00.", icon: "⛲" },
+      { id: "LS-007", name: "降魔浮雕", lat: 31.425559, lng: 120.099569, desc: "长26米巨型石雕，生动再现佛陀战胜魔王诱惑、觉悟成道的故事。", desc_en: "26m relief depicting Buddha's victory over temptation and enlightenment.", desc_ja: "長さ26mの巨大石彫、仏陀が魔王の誘惑に打ち勝ち悟りを開く物語。", desc_ko: "26m 거대 석조, 부처님의 마왕 유혹 극복과 깨달음 이야기.", icon: "🗿" },
+      { id: "LS-008", name: "阿育王柱", lat: 31.426188, lng: 120.099261, desc: "高16.9米花岗岩石柱，复刻古印度阿育王石柱，柱头四狮朝向四方。", desc_en: "16.9m granite pillar, replica of ancient Indian Ashoka Pillar.", desc_ja: "高さ16.9mの花崗岩柱、古代インドのアショーカ王柱のレプリカ。", desc_ko: "16.9m 화강암 기둥, 고대 인도 아소카 왕 기둥 복제.", icon: "🪨" },
+      { id: "LS-009", name: "百子戏弥勒", lat: 31.427190, lng: 120.098844, desc: "9吨青铜群雕，弥勒袒胸露腹，百名孩童攀爬嬉戏，摸肚皮祈福。", desc_en: "9-ton bronze sculpture of Maitreya with 100 children playing.", desc_ja: "9トンの青銅群像、弥勒菩薩と百人の子供たちが遊ぶ姿。", desc_ko: "9톤 청동 군상, 미륵보살과 백 명의 아이들이 노는 모습.", icon: "🧸" },
+      { id: "LS-010", name: "祥符禅寺", lat: 31.427949, lng: 120.098012, desc: "唐代千年古刹，玄奘弟子窥基大师开坛，六角古井与千年银杏。", desc_en: "Thousand-year Tang Dynasty temple with ancient well and ginkgo tree.", desc_ja: "唐時代の千年古刹、玄奘の弟子窺基大師が開山、六角古井戸と千年銀杏。", desc_ko: "당나라 천년 고찰, 현장 제자 규기대사 개산, 육각 고우물과 천년 은행나무.", icon: "🏯" },
+      { id: "LS-011", name: "灵山大佛", lat: 31.430194, lng: 120.096477, desc: "高88米青铜释迦牟尼立像，含台基总高101.5米，725吨铜，世界最高露天青铜佛像。", desc_en: "88m bronze Buddha statue, world's tallest outdoor bronze Buddha.", desc_ja: "高さ88mの青銅釈迦牟尼立像、世界最大の露天青銅仏像。", desc_ko: "88m 청동 석가모니 입상, 세계 최고 노천 청동 불상.", icon: "🗽" },
+      { id: "LS-012", name: "佛教文化博览馆", lat: 31.427856, lng: 120.105632, desc: "三层展厅，含五方五佛展、世界佛教史、万佛殿（9999尊小佛）。", desc_en: "Three-story museum with Buddhist history and Ten Thousand Buddha Hall.", desc_ja: "三階建て展示館、五方五仏展、世界仏教史、万仏殿（9999体の小仏）。", desc_ko: "3층 전시관, 오방오불전, 세계불교사, 만불전(9999존 소불).", icon: "🏛️" },
+      { id: "LS-013", name: "灵山梵宫", lat: 31.428218, lng: 120.102420, desc: "「东方卢浮宫」，72000㎡艺术殿堂。东阳木雕、琉璃、星空穹顶。《吉祥颂》演出：10:35/11:30/14:00/16:00。", desc_en: "Oriental Louvre, 72000㎡ art palace. Shows: 10:35/11:30/14:00/16:00.", desc_ja: "「東方ルーブル」、72000㎡の芸術殿堂。公演：10:35/11:30/14:00/16:00。", desc_ko: "「동방 루브르」, 72000㎡ 예술 전당. 공연: 10:35/11:30/14:00/16:00.", icon: "🕌" },
+      { id: "LS-014", name: "五印坛城", lat: 31.424676, lng: 120.103054, desc: "「小布达拉宫」，藏式五层碉楼，108个转经筒，白墙红边金顶。", desc_en: "Little Potala Palace, Tibetan-style fortress with 108 prayer wheels.", desc_ja: "「小さなポタラ宮」、チベット式五層の楼閣、108のマニ車。", desc_ko: "「작은 포탈라궁」, 티베트식 5층 누각, 108개 마니차.", icon: "🏔️" },
+      { id: "LS-015", name: "曼飞龙塔", lat: 31.426070, lng: 120.104609, desc: "南传佛教白塔，九塔组合，复刻西双版纳曼飞龙白塔，异域风情。", desc_en: "Theravada Buddhist white pagoda, nine-tower complex.", desc_ja: "南伝仏教の白塔、九塔の組み合わせ、異国情緒あふれる。", desc_ko: "남방불교 백탑, 구탑 조합, 이국적 정취.", icon: "🕌" },
+      { id: "LS-016", name: "无尽意斋", lat: 31.428768, lng: 120.096987, desc: "赵朴初先生纪念馆，北京四合院风格，书法真迹、灵山渊源展。", desc_en: "Mr. Zhao Puchu Memorial Hall, Beijing courtyard style.", desc_ja: "趙樸初先生記念館、北京四合院様式、書道真筆と霊山の歴史展示。", desc_ko: "조박초 선생 기념관, 베이징 사합원 양식, 서예 진필과 영산 역사 전시.", icon: "🏡" },
+      { id: "NH-001", name: "拈花广场", lat: 31.420040, lng: 120.076954, desc: "拈花湾入口，拈花微笑雕塑，开园仪式9:30，夜间灯光秀。", desc_en: "Nianhua Bay entrance with flower smile sculpture. Opening ceremony 9:30.", desc_ja: "拈花湾の入口、拈花微笑の彫刻、開園式9:30、夜間ライトショー。", desc_ko: "염화만 입구, 염화미소 조각, 개원식 9:30, 야간 라이트쇼.", icon: "🌸" },
+      { id: "NH-002", name: "梵天花海", lat: 31.415904, lng: 120.075421, desc: "30000㎡四季花海，格桑花、波斯菊、硫华菊，木质步道贯穿。", desc_en: "30000㎡ four-season flower sea with wooden walkways.", desc_ja: "30000㎡の四季の花畑、コスモスやキバナコスモス、木製遊歩道。", desc_ko: "30000㎡ 사계절 꽃밭, 코스모스, 유황국, 목재 산책로.", icon: "🌻" },
+      { id: "NH-003", name: "香月花街", lat: 31.416822, lng: 120.073636, desc: "800米禅意商业街，文创、非遗手作、禅茶、小吃，夜间灯笼。", desc_en: "800m zen shopping street with crafts, tea and street food.", desc_ja: "800mの禅の商店街、文化創作、無形文化遺産工芸、禅茶、軽食。", desc_ko: "800m 선의 상업 거리, 문화 창작, 무형문화재 공예, 선차, 간식.", icon: "🏮" },
+      { id: "NH-004", name: "拈花堂", lat: 31.417841, lng: 120.078339, desc: "静心禅堂，禅坐、抄经、禅茶品鉴，免费体验。讲座10:30/15:30。", desc_en: "Zen meditation hall, free tea ceremony and sutra copying. Talks 10:30/15:30.", desc_ja: "静心禅堂、座禅・写経・禅茶体験（無料）。講座10:30/15:30。", desc_ko: "정심선당, 좌선·사경·선차 체험(무료). 강좌 10:30/15:30.", icon: "🧘" },
+      { id: "NH-005", name: "五灯湖", lat: 31.418665, lng: 120.075312, desc: "5000㎡湖景，《禅行》灯光秀19:00/20:00，湖心亭栈道漫步。", desc_en: "5000㎡ lake with Zen Walk light show at 19:00/20:00.", desc_ja: "5000㎡の湖、「禅行」ライトショー19:00/20:00、湖心亭と遊歩道。", desc_ko: "5000㎡ 호수, 「선행」 라이트쇼 19:00/20:00, 호심정 산책로.", icon: "🌊" },
+      { id: "NH-006", name: "鹿鸣谷", lat: 31.424319, lng: 120.079449, desc: "20000㎡山林幽谷，90%植被覆盖，香樟松柏翠竹，远离喧嚣。", desc_en: "20000㎡ forest valley with 90% vegetation cover, peaceful retreat.", desc_ja: "20000㎡の山林幽谷、90%の植生率、キャンパーや松柏、竹林の静寂。", desc_ko: "20000㎡ 산림 유곡, 90% 식생률, 녹나무·소나무·대나무 숲의 고요함.", icon: "🦌" },
     ];
+    function getSpotDesc(spot) {
+      const key = 'desc_' + I18N.locale;
+      if (spot[key]) return spot[key];
+      return spot.desc; // fallback to Chinese
+    }
 
     function getSpotByName(name) {
       return SPOTS.find(s => name.includes(s.name) || s.name.includes(name));
@@ -1111,204 +1987,13 @@
       return SPOTS.find(s => s.id === id);
     }
 
-    // ==================== Canvas 数字人绘制 ====================
-    const canvas = document.getElementById('avatarCanvas');
-    const ctx = canvas.getContext('2d');
-    const W = 144, H = 144;
-    let avatarState = 'idle';
-    let mouthOpen = 0;
-    let blinkPhase = 0;
-    let eyebrowOffset = 0;
-    let blushAlpha = 0;
-    let headTilt = 0;
-
-    function drawAvatar() {
-      ctx.clearRect(0, 0, W, H);
-      const cx = W / 2, cy = H / 2;
-      ctx.save();
-      ctx.translate(cx, cy + 10);
-      ctx.rotate(headTilt * 0.05);
-
-      const bodyGrad = ctx.createLinearGradient(0, 45, 0, 82);
-      bodyGrad.addColorStop(0, '#f0fdfa');
-      bodyGrad.addColorStop(1, '#ccfbf1');
-      ctx.fillStyle = bodyGrad;
-      ctx.beginPath();
-      ctx.ellipse(0, 58, 38, 28, 0, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = '#0d9488';
-      ctx.beginPath();
-      ctx.moveTo(-16, 50);
-      ctx.lineTo(0, 38);
-      ctx.lineTo(16, 50);
-      ctx.closePath();
-      ctx.fill();
-
-      const skinGrad = ctx.createRadialGradient(-4, -10, 4, 0, 0, 36);
-      skinGrad.addColorStop(0, '#fff7ed');
-      skinGrad.addColorStop(0.7, '#fed7aa');
-      skinGrad.addColorStop(1, '#fdba74');
-      ctx.fillStyle = skinGrad;
-      ctx.beginPath();
-      ctx.arc(0, 0, 34, 0, Math.PI * 2);
-      ctx.fill();
-
-      if (blushAlpha > 0) {
-        ctx.fillStyle = `rgba(251,146,60,${blushAlpha * 0.22})`;
-        ctx.beginPath(); ctx.ellipse(-16, 7, 7, 4, 0, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.ellipse(16, 7, 7, 4, 0, 0, Math.PI * 2); ctx.fill();
-      }
-
-      const eyeY = -7;
-      const eyeOpen = blinkPhase < 0.05 ? 0.1 : (blinkPhase < 0.1 ? 1 - (blinkPhase - 0.05) / 0.05 : 1);
-      drawEye(-12, eyeY, eyeOpen * 0.9);
-      drawEye(12, eyeY, eyeOpen * 0.9);
-
-      const browY = eyeY - 8;
-      ctx.strokeStyle = '#78350f';
-      ctx.lineWidth = 2;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(-16, browY - 3);
-      ctx.quadraticCurveTo(-12, browY - 6 - eyebrowOffset, -7, browY - 3);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(7, browY - 3);
-      ctx.quadraticCurveTo(12, browY - 6 - eyebrowOffset, 16, browY - 3);
-      ctx.stroke();
-
-      ctx.strokeStyle = '#d97706';
-      ctx.lineWidth = 1.1;
-      ctx.beginPath();
-      ctx.moveTo(0, 1);
-      ctx.quadraticCurveTo(-3, 7, 0, 9);
-      ctx.stroke();
-
-      const mouthY = 14;
-      ctx.strokeStyle = '#b45309';
-      ctx.lineWidth = 1.4;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      if (avatarState === 'speaking' || mouthOpen > 0.1) {
-        const openH = mouthOpen * 9;
-        ctx.moveTo(-9, mouthY);
-        ctx.quadraticCurveTo(0, mouthY + openH, 9, mouthY);
-      } else if (avatarState === 'thinking') {
-        ctx.moveTo(-5, mouthY + 3);
-        ctx.quadraticCurveTo(0, mouthY - 1, 5, mouthY + 3);
-      } else {
-        ctx.moveTo(-7, mouthY);
-        ctx.quadraticCurveTo(0, mouthY + 2, 7, mouthY);
-      }
-      ctx.stroke();
-
-      ctx.fillStyle = '#1c1917';
-      ctx.beginPath();
-      ctx.arc(0, -3, 36, Math.PI * 1.1, Math.PI * 1.9);
-      ctx.lineTo(24, 16);
-      ctx.quadraticCurveTo(34, 5, 30, -11);
-      ctx.quadraticCurveTo(34, -27, 0, -38);
-      ctx.quadraticCurveTo(-34, -27, -30, -11);
-      ctx.quadraticCurveTo(-34, 5, -24, 16);
-      ctx.closePath();
-      ctx.fill();
-
-      ctx.restore();
-    }
-
-    function drawEye(x, y, open) {
-      const h = 5.5 * open;
-      if (h < 0.5) {
-        ctx.strokeStyle = '#78350f';
-        ctx.lineWidth = 1.8;
-        ctx.beginPath();
-        ctx.moveTo(x - 4.5, y);
-        ctx.lineTo(x + 4.5, y);
-        ctx.stroke();
-        return;
-      }
-      ctx.fillStyle = '#fff';
-      ctx.beginPath();
-      ctx.ellipse(x, y, 6.5, h, 0, 0, Math.PI * 2);
-      ctx.fill();
-      const irisGrad = ctx.createRadialGradient(x, y, 0.8, x, y, 4.5);
-      irisGrad.addColorStop(0, '#1e293b');
-      irisGrad.addColorStop(0.6, '#334155');
-      irisGrad.addColorStop(1, '#0f172a');
-      ctx.fillStyle = irisGrad;
-      ctx.beginPath();
-      ctx.arc(x, y, 3.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#fff';
-      ctx.beginPath();
-      ctx.arc(x + 1.3, y - 1.3, 1.3, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#78350f';
-      ctx.lineWidth = 1.3;
-      ctx.beginPath();
-      ctx.ellipse(x, y, 6.5, h, 0, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-
-    let mouthTimer = null;
+    // ==================== 头像状态 ====================
     function setAvatarState(state) {
       if (!isAvatarAnimOn()) state = 'idle';
-      avatarState = state;
-      avatarStatus.textContent = state === 'thinking' ? '正在思考...' :
-        state === 'speaking' ? '正在讲解...' : '您好，请问有什么可以帮您？';
-      if (state === 'thinking') { eyebrowOffset = 3; headTilt = 3; blushAlpha = 0; mouthOpen = 0; stopMouthAnim(); }
-      else if (state === 'speaking') { eyebrowOffset = -2; headTilt = -2; blushAlpha = 0.5; startMouthAnim(); }
-      else { eyebrowOffset = 0; headTilt = 0; blushAlpha = 0; mouthOpen = 0; stopMouthAnim(); }
+      const statusText = state === 'thinking' ? I18N.t('avatarThinking') :
+        state === 'speaking' ? I18N.t('avatarSpeaking') : I18N.t('avatarIdle');
+      avatarStatus.textContent = statusText;
     }
-
-    let blinkIntervalId = null;
-
-    function startMouthAnim() {
-      stopMouthAnim();
-      let t = 0;
-      mouthTimer = setInterval(() => { t += 0.15; mouthOpen = Math.abs(Math.sin(t * 3)) * 0.75 + Math.random() * 0.2; }, 40);
-    }
-
-    function stopMouthAnim() { if (mouthTimer) { clearInterval(mouthTimer); mouthTimer = null; } mouthOpen = 0; }
-
-    function startBlinkTimer() {
-      stopBlinkTimer();
-      blinkIntervalId = setInterval(() => {
-        blinkPhase = 0;
-        const iv = setInterval(() => { blinkPhase += 0.02; if (blinkPhase >= 0.3) { clearInterval(iv); setTimeout(() => { blinkPhase = 0; }, 2000 + Math.random() * 2000); } }, 16);
-      }, 2500 + Math.random() * 2000);
-    }
-
-    function stopBlinkTimer() { if (blinkIntervalId) { clearInterval(blinkIntervalId); blinkIntervalId = null; } blinkPhase = 0; }
-
-    function drawLoop() { drawAvatar(); avatarAnimId = requestAnimationFrame(drawLoop); }
-
-    function restartDrawLoop() {
-      stopDrawLoop();
-      drawLoop();
-    }
-
-    function stopDrawLoop() {
-      if (avatarAnimId) { cancelAnimationFrame(avatarAnimId); avatarAnimId = null; }
-    }
-
-    function refreshAvatarAnim() {
-      if (isAvatarAnimOn()) {
-        restartDrawLoop();
-        startBlinkTimer();
-        drawAvatar();
-      } else {
-        stopDrawLoop();
-        stopBlinkTimer();
-        stopMouthAnim();
-        eyebrowOffset = 0; headTilt = 0; blushAlpha = 0; mouthOpen = 0; blinkPhase = 0;
-        drawAvatar(); // 绘制一帧静态头像
-      }
-    }
-
-    drawLoop();
-    startBlinkTimer();
 
     // ==================== 兴趣标签 ====================
     async function loadInterests() {
@@ -1328,7 +2013,7 @@
             currentInterest = item.key;
             localStorage.setItem('tour_interest', item.key);
             if (item.key !== 'general') {
-              addMessage('bot', `已切换到「${item.label}」模式，我会根据您的偏好提供更贴合的讲解服务。`);
+              addMessage('bot', I18N.t('interestChanged', {label: item.label}));
             }
           });
           container.appendChild(tag);
@@ -1340,7 +2025,12 @@
       const div = document.createElement('div');
       div.className = `msg ${role}`;
       const time = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-      div.innerHTML = `<div class="bubble">${escapeHtml(text)}</div><span class="time">${time}</span>`;
+      let inner = '';
+      if (role === 'user' && pendingImage) {
+        inner += `<img class="bubble-img" src="${escapeHtml(pendingImage.dataUrl)}" alt="上传图片" />`;
+      }
+      inner += `<div class="bubble">${escapeHtml(text)}</div><span class="time">${time}</span>`;
+      div.innerHTML = inner;
       if (role === 'bot') {
         div.innerHTML += createFeedbackHtml(question || '', text);
       }
@@ -1364,47 +2054,45 @@
       chatBox.appendChild(div);
       chatBox.scrollTop = chatBox.scrollHeight;
       let firstToken = true;
-      return {
-        append(chunk) {
-          if (firstToken) { firstToken = false; setAvatarState('speaking'); }
-          bubble.textContent += chunk;
-          chatBox.scrollTop = chatBox.scrollHeight;
-        },
-        setFinal(text) {
-          bubble.textContent = text;
-          bubble.classList.remove('streaming');
-          chatBox.scrollTop = chatBox.scrollHeight;
-          setAvatarState('idle');
-          stopCurrentTTS();
-          injectMapLink(bubble, text);
-          // 添加反馈按钮
-          if (currentQuestion) {
-            div.insertAdjacentHTML('beforeend', createFeedbackHtml(currentQuestion, text));
-          }
-        },
-        setError(text) {
-          bubble.textContent = text;
-          bubble.classList.remove('streaming');
-          setAvatarState('idle');
-        },
+      div.append = function(chunk) {
+        if (firstToken) { firstToken = false; setAvatarState('speaking'); }
+        bubble.textContent += chunk;
+        chatBox.scrollTop = chatBox.scrollHeight;
       };
+      div.setFinal = function(text) {
+        bubble.textContent = text;
+        bubble.classList.remove('streaming');
+        chatBox.scrollTop = chatBox.scrollHeight;
+        setAvatarState('idle');
+        stopCurrentTTS();
+        injectMapLink(bubble, text);
+        if (currentQuestion) {
+          div.insertAdjacentHTML('beforeend', createFeedbackHtml(currentQuestion, text));
+        }
+      };
+      div.setError = function(text) {
+        bubble.textContent = text;
+        bubble.classList.remove('streaming');
+        setAvatarState('idle');
+      };
+      return div;
     }
 
     function injectMapLink(bubble, text) {
-      const hasMapExpr = text.includes('点击查看景区地图') || text.includes('查看景区地图');
+      const hasMapExpr = text.includes(I18N.t('clickViewMap')) || text.includes(I18N.t('viewMap'));
       if (hasMapExpr) {
         const card = document.createElement('div');
         card.className = 'map-link-card';
-        card.textContent = '🗺️ 打开景区地图';
+        card.textContent = '🗺️ ' + I18N.t('openMap');
         card.addEventListener('click', () => switchToMap());
         bubble.appendChild(card);
         return;
       }
-      const mapKeywords = ['哪里', '位置', '地图', '路线', '怎么走', '距离', '方位', '在哪', '多远', '方位', '分布'];
+      const mapKeywords = I18N.t('mapKeywords');
       if (mapKeywords.some(k => text.includes(k))) {
         const card = document.createElement('div');
         card.className = 'map-link-card';
-        card.textContent = '🗺️ 查看景区地图';
+        card.textContent = '🗺️ ' + I18N.t('viewMap');
         card.addEventListener('click', () => switchToMap());
         bubble.appendChild(card);
       }
@@ -1421,8 +2109,8 @@
       const safeA = (answer || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       return `
         <div class="feedback-actions" data-q="${safeQ}" data-a="${safeA}">
-          <button class="fb-btn fb-good" data-rating="good">👍 有用</button>
-          <button class="fb-btn fb-bad" data-rating="bad">👎 没用</button>
+          <button class="fb-btn fb-good" data-rating="good">${I18N.t('feedbackGood')}</button>
+          <button class="fb-btn fb-bad" data-rating="bad">${I18N.t('feedbackBad')}</button>
         </div>`;
     }
 
@@ -1479,22 +2167,175 @@
         const audio = new Audio(url);
         currentAudio = audio;
         currentAudioUrl = url;
+
+        if (live2dModel) {
+          const motionIdx = Math.floor(Math.random() * 4);
+          live2dModel.motion('TapBody', motionIdx);
+        }
+
+        let lipSyncInterval = null;
+        let mouthOpenTime = 0;
+        if (live2dModel) {
+          lipSyncInterval = setInterval(() => {
+            if (!currentAudio || currentAudio.paused) return;
+            mouthOpenTime += 0.05;
+            const mouthOpen = 0.4 + Math.sin(mouthOpenTime * 8) * 0.35 + Math.random() * 0.15;
+            try {
+              if (live2dModel.internalModel && live2dModel.internalModel.coreModel) {
+                live2dModel.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', Math.min(1, Math.max(0, mouthOpen)));
+              }
+            } catch (e) { /* 静默失败 */ }
+          }, 50);
+        }
+
+        const gestureInterval = setInterval(() => {
+          if (!currentAudio || currentAudio.paused) return;
+          if (live2dModel) {
+            const motionIdx = Math.floor(Math.random() * 4);
+            live2dModel.motion('TapBody', motionIdx);
+          }
+        }, 4000);
+
         audio.onended = () => {
+          clearInterval(gestureInterval);
+          clearInterval(lipSyncInterval);
           if (currentAudioUrl === url) { URL.revokeObjectURL(url); currentAudioUrl = null; }
           currentAudio = null;
           setAvatarState('idle');
+          if (live2dModel) {
+            live2dModel.motion('Idle');
+          }
         };
-        audio.onerror = () => { stopCurrentTTS(); setAvatarState('idle'); };
+        audio.onerror = () => { 
+          clearInterval(gestureInterval);
+          clearInterval(lipSyncInterval);
+          stopCurrentTTS(); 
+          setAvatarState('idle'); 
+          if (live2dModel) {
+            live2dModel.motion('Idle');
+          }
+        };
         if (generation !== ttsGeneration) { URL.revokeObjectURL(url); return; }
         await audio.play();
       } catch (e) {
         if (e.name === 'AbortError') return;
         setAvatarState('idle');
+        if (live2dModel) {
+          live2dModel.motion('Idle');
+        }
+      }
+    }
+
+    // 供路线规划调用：发送消息并等待回答
+    async function sendMessage(question, skipRouteCheck) {
+      if (skipRouteCheck) {
+        currentQuestion = question;
+        isGenerating = true;
+        abortCurrentChat();
+        stopCurrentTTS();
+        const myGen = ++ttsGeneration;
+        addMessage('user', question);
+        setAvatarState('thinking');
+        sendBtn.disabled = true;
+        chatAbortController = new AbortController();
+        const streamMsg = addBotStreamMessage();
+
+        try {
+          const body = { question, session_id: sessionId, interest: currentInterest, lang: I18N.locale };
+          if (pendingImage) { body.image = pendingImage.base64; }
+          const res = await fetch(`${API_BASE}/chat/text/stream`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: chatAbortController.signal,
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || `请求失败 (${res.status})`);
+          }
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+          let finalAnswer = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (myGen !== ttsGeneration) break;
+            buffer += decoder.decode(value, { stream: true });
+            const blocks = buffer.split('\n\n');
+            buffer = blocks.pop() || '';
+            for (const block of blocks) {
+              const line = block.split('\n').find(l => l.startsWith('data: '));
+              if (!line) continue;
+              try {
+                const payload = JSON.parse(line.slice(6));
+                if (payload.type === 'token') {
+                  finalAnswer += payload.content;
+                  streamMsg.querySelector('.bubble').textContent = finalAnswer;
+                  chatBox.scrollTop = chatBox.scrollHeight;
+                } else if (payload.type === 'expression') {
+                  setAvatarState(payload.expression);
+                } else if (payload.type === 'done') {
+                  finalAnswer = payload.answer || finalAnswer;
+                  sessionId = payload.session_id || sessionId;
+                  if (sessionId) localStorage.setItem('tour_session_id', sessionId);
+                } else if (payload.type === 'error') {
+                  throw new Error(payload.message);
+                }
+              } catch (_) {}
+            }
+          }
+          streamMsg.querySelector('.bubble').textContent = finalAnswer || I18N.t('answerDone');
+          streamMsg.querySelector('.bubble').classList.remove('streaming');
+          setAvatarState('idle');
+          // 添加反馈按钮
+          if (finalAnswer && currentQuestion) {
+            streamMsg.insertAdjacentHTML('beforeend', createFeedbackHtml(currentQuestion, finalAnswer));
+          }
+          injectMapLink(streamMsg.querySelector('.bubble'), finalAnswer);
+          if (myGen === ttsGeneration && finalAnswer) {
+            playTTS(finalAnswer, myGen);
+          }
+        } catch (e) {
+          if (e.name !== 'AbortError') {
+            streamMsg.querySelector('.bubble').textContent = I18N.t('networkError');
+            streamMsg.querySelector('.bubble').classList.remove('streaming');
+            setAvatarState('idle');
+          }
+        } finally {
+          isGenerating = false;
+          sendBtn.disabled = false;
+          chatAbortController = null;
+          if (pendingImage) {
+            pendingImage = null;
+            document.getElementById('imagePreview').src = '';
+            document.getElementById('imagePreviewWrap').classList.remove('show');
+            document.getElementById('imageBtn').classList.remove('has-image');
+            document.getElementById('imageInput').value = '';
+          }
+        }
+      } else {
+        textInput.value = question;
+        sendBtn.click();
       }
     }
 
     async function askQuestion(question) {
       if (!question.trim() || isGenerating) return;
+
+      // 检测路线规划意图
+      const routeKeywords = I18N.t('routeKeywords');
+      const isRouteRequest = routeKeywords.some(k => question.includes(k));
+      if (isRouteRequest && !question.startsWith('___GUIDE___')) {
+        // 切换到地图页面并打开路线规划面板
+        switchToMap();
+        setTimeout(() => {
+          document.getElementById('routePanel').classList.add('show');
+          addMessage('bot', I18N.t('routeGuideMsg'));
+        }, 500);
+        return;
+      }
+
       currentQuestion = question;
       isGenerating = true;
       abortCurrentChat();
@@ -1510,7 +2351,7 @@
         const res = await fetch(`${API_BASE}/chat/text/stream`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ question, session_id: sessionId, interest: currentInterest }),
+          body: JSON.stringify({ question, session_id: sessionId, interest: currentInterest, lang: I18N.locale }),
           signal: chatAbortController.signal,
         });
         if (!res.ok) {
@@ -1546,14 +2387,14 @@
               streamMsg.setFinal(finalAnswer);
               loadHistory();
             } else if (data.type === 'error') {
-              throw new Error(data.message || '流式回答失败');
+              throw new Error(data.message || I18N.t('streamError'));
             }
           }
         }
         if (myGen === ttsGeneration && finalAnswer) await playTTS(finalAnswer, myGen);
       } catch (e) {
         if (e.name === 'AbortError') return;
-        streamMsg.setError(`抱歉，服务暂时不可用：${e.message}`);
+        streamMsg.setError(I18N.t('serviceUnavailable') + ': ' + e.message);
         setAvatarState('idle');
       } finally {
         chatAbortController = null;
@@ -1587,13 +2428,13 @@
         mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
         mediaRecorder.start();
         voiceBtn.classList.add('recording');
-        setStatus('正在录音，松手结束...');
-      } catch (e) { setStatus('无法访问麦克风: ' + e.message); }
+        setStatus(I18N.t('recording'));
+      } catch (e) { setStatus(I18N.t('micError') + ': ' + e.message); }
     }
     async function stopRecordingAndSend() {
       if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
       voiceBtn.classList.remove('recording');
-      setStatus('正在识别语音...');
+      setStatus(I18N.t('recognizing'));
       return new Promise(resolve => {
         mediaRecorder.onstop = async () => {
           const blob = new Blob(audioChunks, { type: 'audio/webm' });
@@ -1608,8 +2449,8 @@
             if (data.text && data.text !== '(未识别到内容)') {
               textInput.value = data.text;
               await askQuestion(data.text);
-            } else { setStatus('未识别到语音，请重试'); }
-          } catch (e) { setStatus('语音识别失败: ' + e.message); }
+            } else { setStatus(I18N.t('noVoice')); }
+          } catch (e) { setStatus(I18N.t('voiceError') + ': ' + e.message); }
           resolve();
         };
         mediaRecorder.stop();
@@ -1624,77 +2465,110 @@
     voiceBtn.addEventListener('touchend', e => { e.preventDefault(); stopRecordingAndSend(); });
 
     // ==================== 地图 ====================
-    function createMarkerIcon(id) {
-      const isHighlight = highlightMarker === id;
-      const size = isHighlight ? 40 : 32;
-      const color = isHighlight ? '#f59e0b' : '#0d9488';
-      return L.divIcon({
-        html: `
-          <div class="custom-marker-wrapper">
-            <div class="custom-marker${isHighlight ? ' highlight' : ''}" style="--color:${color};--size:${size}px;">
-              <svg viewBox="0 0 24 24" fill="none"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" fill="white"/></svg>
-            </div>
-            ${isHighlight ? '<div class="marker-pulse"></div>' : ''}
-          </div>`,
-        iconSize: [size, size * 1.3],
-        iconAnchor: [size / 2, size * 1.3],
-        popupAnchor: [0, -size * 1.1],
-        className: 'custom-marker-container' // 禁用默认阴影
-      });
+    function createMarkerIcon(color, size) {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 42">
+    <path d="M16 2C10.477 2 6 6.477 6 12c0 7.732 10 28 10 28s10-20.268 10-28C26 6.477 21.523 2 16 2z" fill="${color}" stroke="white" stroke-width="1.5"/>
+    <circle cx="16" cy="12" r="7" fill="white"/>
+    <path d="M16 4.5c-3.038 0-5.5 2.462-5.5 5.5 0 3.038 6.5 12.5 6.5 12.5s6.5-9.462 6.5-12.5c0-3.038-2.462-5.5-5.5-5.5zm0 9c-2.485 0-4.5-2.015-4.5-4.5s2.015-4.5 4.5-4.5 4.5 2.015 4.5 4.5-2.015 4.5-4.5 4.5z" fill="${color}"/>
+  </svg>`;
+      return 'data:image/svg+xml,' + encodeURIComponent(svg);
     }
+
+    function createHighlightIcon(color, size) {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 60">
+    <defs>
+      <filter id="glow"><feGaussianBlur stdDeviation="2" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    </defs>
+    <path d="M24 2C18.477 2 14 6.477 14 12c0 7.732 10 28 10 28s10-20.268 10-28C34 6.477 29.523 2 24 2z" fill="${color}" stroke="white" stroke-width="2" filter="url(#glow)"/>
+    <circle cx="24" cy="14" r="9" fill="white"/>
+    <path d="M24 4.5c-4.142 0-7.5 3.358-7.5 7.5 0 4.142 9.5 19 9.5 19s9.5-14.858 9.5-19c0-4.142-3.358-7.5-7.5-7.5zm0 12c-3.314 0-6-2.686-6-6s2.686-6 6-6 6 2.686 6 6-2.686 6-6 6z" fill="${color}"/>
+  </svg>`;
+      return 'data:image/svg+xml,' + encodeURIComponent(svg);
+    }
+
+    let mapMarkers = [];
 
     function initMap(centerOn) {
       if (mapInitialized) {
         if (centerOn) {
-          map.setView([centerOn.lat, centerOn.lng], 16, { animate: true });
           highlightMarker = centerOn.id;
+          map.setZoomAndCenter(16, [centerOn.lng, centerOn.lat]);
           refreshMarkers();
         }
-        map.invalidateSize();
         return;
       }
 
-      const center = centerOn ? [centerOn.lat, centerOn.lng] : [31.415, 120.098];
+      const centerLat = centerOn ? centerOn.lat : 31.4220;
+      const centerLng = centerOn ? centerOn.lng : 120.100;
       const zoom = centerOn ? 16 : 14;
-      map = L.map('mapContainer').setView(center, zoom);
 
-      L.tileLayer('https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-        maxZoom: 19,
-      }).addTo(map);
+      map = new AMap.Map('mapContainer', {
+        zoom: zoom,
+        center: [centerLng, centerLat],
+        mapStyle: 'amap://styles/normal',
+        resizeEnable: true,
+      });
 
       refreshMarkers();
       mapInitialized = true;
-
-      setTimeout(() => { map.invalidateSize(); }, 300);
     }
 
     function refreshMarkers() {
       if (!map) return;
-      map.eachLayer(layer => { if (layer instanceof L.Marker || layer instanceof L.TileLayer) return; if (layer instanceof L.Marker) map.removeLayer(layer); });
+      map.clearMap();
+      mapMarkers = [];
+
       SPOTS.forEach(spot => {
-        const marker = L.marker([spot.lat, spot.lng], { icon: createMarkerIcon(spot.id) }).addTo(map);
-        const popupContent = `
-          <h3>${spot.icon} ${spot.name}</h3>
-          <div class="pop-desc">${spot.desc}</div>
-          <div class="pop-ask" data-spot="${spot.name}">💬 问问 AI</div>
-        `;
-        marker.bindPopup(popupContent, { maxWidth: 260, closeButton: true });
-        marker.on('popupopen', () => {
+        const isHighlight = highlightMarker === spot.id;
+        const size = isHighlight ? 48 : 32;
+        const height = isHighlight ? 60 : 42;
+        const color = isHighlight ? '#f59e0b' : '#0d9488';
+
+        const icon = new AMap.Icon({
+          size: new AMap.Size(size, height),
+          image: isHighlight ? createHighlightIcon(color, size) : createMarkerIcon(color, size),
+          imageSize: new AMap.Size(size, height),
+          imageOffset: new AMap.Pixel(0, 0),
+        });
+
+        const marker = new AMap.Marker({
+          position: [spot.lng, spot.lat],
+          icon: icon,
+          offset: new AMap.Pixel(-size / 2, -height),
+          zIndex: isHighlight ? 1000 : 100,
+        });
+
+        const infoContent = `
+          <div class="amap-info-content">
+            <h3>${spot.icon} ${spot.name}</h3>
+            <div class="pop-desc">${getSpotDesc(spot)}</div>
+            <div class="pop-ask" data-spot="${spot.name}">💬 ${I18N.t('askAI')}</div>
+          </div>`;
+
+        const infoWindow = new AMap.InfoWindow({
+          content: infoContent,
+          offset: new AMap.Pixel(0, -height - 8),
+        });
+
+        marker.on('click', () => {
+          infoWindow.open(map, marker.getPosition());
           setTimeout(() => {
             const btn = document.querySelector(`.pop-ask[data-spot="${spot.name}"]`);
             if (btn) {
               btn.addEventListener('click', () => {
-                map.closePopup();
+                infoWindow.close();
                 switchToChat();
                 setTimeout(() => {
-                  textInput.value = `给我详细介绍一下${spot.name}`;
+                  textInput.value = I18N.t('spotDetailPrompt', {name: spot.name});
                   sendBtn.click();
                 }, 300);
               });
             }
           }, 100);
         });
+
+        map.add(marker);
+        mapMarkers.push(marker);
       });
     }
 
@@ -1704,11 +2578,196 @@
       document.getElementById('chatView').classList.remove('active');
       document.getElementById('serviceView').classList.remove('active');
       document.getElementById('settingsView').classList.remove('active');
+      
+      document.getElementById('photoSpotView').classList.remove('active');
+      document.getElementById('travelogueView').classList.remove('active');
       document.getElementById('mapView').classList.add('active');
 
       let spot = null;
       if (spotId) spot = getSpotById(spotId);
       initMap(spot);
+
+      // 初始化路线规划面板的景点标签
+      initRouteSpotTags();
+    }
+
+    // ==================== 路线规划 ====================
+    let routeData = null;       // 当前路线数据
+    let routePolyline = null;   // 路线折线
+    let routeMarkers = [];      // 路线标记
+    let routeCurrentIdx = -1;   // 当前导览索引
+
+    function initRouteSpotTags() {
+      const container = document.getElementById('rpSpotTags');
+      if (container.children.length > 0) return; // 已初始化
+      SPOTS.forEach(spot => {
+        const tag = document.createElement('span');
+        tag.className = 'rp-spot-tag';
+        tag.textContent = spot.icon + ' ' + spot.name;
+        tag.dataset.spotId = spot.id;
+        tag.addEventListener('click', () => {
+          tag.classList.toggle('selected');
+        });
+        container.appendChild(tag);
+      });
+    }
+
+    // 打开/关闭路线规划面板
+    document.getElementById('routePlanBtn').addEventListener('click', () => {
+      const panel = document.getElementById('routePanel');
+      const result = document.getElementById('routeResult');
+      if (panel.classList.contains('show')) {
+        panel.classList.remove('show');
+      } else {
+        result.classList.remove('show');
+        panel.classList.add('show');
+      }
+    });
+
+    document.getElementById('rpCloseBtn').addEventListener('click', () => {
+      document.getElementById('routePanel').classList.remove('show');
+    });
+
+    document.getElementById('rrCloseBtn').addEventListener('click', () => {
+      document.getElementById('routeResult').classList.remove('show');
+      clearRouteOverlay();
+    });
+
+    // 生成路线
+    document.getElementById('rpGenerateBtn').addEventListener('click', async () => {
+      const btn = document.getElementById('rpGenerateBtn');
+      const loading = document.getElementById('rpLoading');
+      btn.disabled = true;
+      loading.style.display = 'block';
+
+      try {
+        const preference = document.getElementById('rpPreference').value;
+        const duration = document.getElementById('rpDuration').value;
+        const selectedTags = document.querySelectorAll('#rpSpotTags .rp-spot-tag.selected');
+        const spotIds = Array.from(selectedTags).map(t => t.dataset.spotId);
+
+        const res = await fetch(`${API_BASE}/api/route/plan`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ preference, duration, spot_ids: spotIds, lang: I18N.locale }),
+        });
+        if (!res.ok) throw new Error('API 请求失败');
+        const data = await res.json();
+
+        routeData = data;
+        renderRouteResult(data);
+        drawRouteOnMap(data.spots);
+      } catch (e) {
+        console.error('路线规划失败:', e);
+        showToast(I18N.t('routeFail'), true);
+      } finally {
+        btn.disabled = false;
+        loading.style.display = 'none';
+        document.getElementById('routePanel').classList.remove('show');
+      }
+    });
+
+    function renderRouteResult(data) {
+      document.getElementById('rrTitle').textContent = data.title;
+      document.getElementById('rrTips').textContent = '💡 ' + data.tips;
+
+      const list = document.getElementById('rrSpotList');
+      list.innerHTML = '';
+      data.spots.forEach((spot, idx) => {
+        const card = document.createElement('div');
+        card.className = 'rr-spot-card';
+        card.innerHTML = `
+          <div class="rr-num">${idx + 1}</div>
+          <div class="rr-info">
+            <div class="rr-name">${spot.icon} ${spot.name}</div>
+            <div class="rr-reason">${spot.reason}</div>
+          </div>`;
+        card.addEventListener('click', () => {
+          routeCurrentIdx = idx;
+          highlightRouteSpot(idx);
+          map.setZoomAndCenter(16, [spot.lng, spot.lat]);
+        });
+        list.appendChild(card);
+      });
+
+      document.getElementById('routeResult').classList.add('show');
+    }
+
+    function drawRouteOnMap(spots) {
+      clearRouteOverlay();
+      if (!map || spots.length < 2) return;
+
+      // 画折线
+      const path = spots.map(s => [s.lng, s.lat]);
+      routePolyline = new AMap.Polyline({
+        path: path,
+        strokeColor: '#0d9488',
+        strokeWeight: 4,
+        strokeOpacity: 0.7,
+        lineJoin: 'round',
+        strokeStyle: 'dashed',
+        showDir: true,
+      });
+      map.add(routePolyline);
+
+      // 画起点/终点/中间标记
+      spots.forEach((spot, idx) => {
+        const isFirst = idx === 0;
+        const isLast = idx === spots.length - 1;
+        let color = '#0d9488';
+        let label = String(idx + 1);
+        if (isFirst) color = '#10b981';
+        if (isLast) color = '#f59e0b';
+
+        const marker = new AMap.Marker({
+          position: [spot.lng, spot.lat],
+          content: `<div style="width:22px;height:22px;border-radius:50%;background:${color};color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.3);">${label}</div>`,
+          offset: new AMap.Pixel(-11, -11),
+          zIndex: 900,
+        });
+        map.add(marker);
+        routeMarkers.push(marker);
+      });
+
+      map.setFitView();
+    }
+
+    function clearRouteOverlay() {
+      if (routePolyline) { map.remove(routePolyline); routePolyline = null; }
+      routeMarkers.forEach(m => map.remove(m));
+      routeMarkers = [];
+      routeCurrentIdx = -1;
+    }
+
+    function highlightRouteSpot(idx) {
+      if (!routeData) return;
+      document.querySelectorAll('.rr-spot-card').forEach((c, i) => {
+        c.classList.toggle('active', i === idx);
+      });
+    }
+
+    // 开始导览
+    document.getElementById('rrStartBtn').addEventListener('click', async () => {
+      if (!routeData || routeData.spots.length === 0) return;
+      routeCurrentIdx = 0;
+      highlightRouteSpot(0);
+      const spot = routeData.spots[0];
+      map.setZoomAndCenter(16, [spot.lng, spot.lat]);
+
+      // 切换到聊天页面，发送导览请求
+      switchToChat();
+      const introMsg = I18N.t('guideStartMsg', {title: routeData.title, name: spot.name});
+      await sendMessage(introMsg, true);
+    });
+
+    // 暴露给聊天：继续下一个景点
+    function guideNextSpot() {
+      if (!routeData || routeCurrentIdx >= routeData.spots.length - 1) return null;
+      routeCurrentIdx++;
+      highlightRouteSpot(routeCurrentIdx);
+      const spot = routeData.spots[routeCurrentIdx];
+      map.setZoomAndCenter(16, [spot.lng, spot.lat]);
+      return spot;
     }
 
     function switchToChat() {
@@ -1717,6 +2776,9 @@
       document.getElementById('mapView').classList.remove('active');
       document.getElementById('serviceView').classList.remove('active');
       document.getElementById('settingsView').classList.remove('active');
+      
+      document.getElementById('photoSpotView').classList.remove('active');
+      document.getElementById('travelogueView').classList.remove('active');
       document.getElementById('chatView').classList.add('active');
       chatBox.scrollTop = chatBox.scrollHeight;
     }
@@ -1727,6 +2789,7 @@
         if (view === 'chatView') switchToChat();
         else if (view === 'mapView') switchToMap();
         else if (view === 'serviceView') switchToService();
+        else if (view === 'travelogueView') switchToTravelogue();
       });
     });
 
@@ -1745,13 +2808,16 @@
       document.getElementById('chatView').classList.remove('active');
       document.getElementById('mapView').classList.remove('active');
       document.getElementById('settingsView').classList.remove('active');
+      
+      document.getElementById('photoSpotView').classList.remove('active');
+      document.getElementById('travelogueView').classList.remove('active');
       document.getElementById('serviceView').classList.add('active');
       if (!servicesLoaded) loadServices();
     }
 
     async function loadServices() {
       const grid = document.getElementById('serviceGrid');
-      grid.innerHTML = '<div class="service-loading">加载中...</div>';
+      grid.innerHTML = '<div class="service-loading" data-i18n="loading"></div>';
 
       const [weatherRes, showsRes] = await Promise.all([
         fetch(`${API_BASE}/services/weather`).then(r => r.json()).catch(() => null),
@@ -1775,13 +2841,13 @@
         <div class="service-card">
           <div class="service-card-header">
             <div class="card-icon blue">🌤️</div>
-            <h3>实时天气 · ${w.city || '灵山胜境'}</h3>
+            <h3>${I18N.t('weatherTitle')} · ${w.city || '灵山胜境'}</h3>
           </div>
           <div class="weather-main">
             <div class="weather-icon">${w.icon || '⛅'}</div>
             <div class="weather-info">
               <div class="weather-temp">${w.temperature || '--'}</div>
-              <div class="weather-desc">${w.weather || '--'} 体感 ${w.feels_like || '--'}</div>
+              <div class="weather-desc">${w.weather || '--'} ${I18N.t('feelsLike')} ${w.feels_like || '--'}</div>
               <div class="weather-details">
                 <span class="weather-detail">💧 ${w.humidity || '--'}</span>
                 <span class="weather-detail">🌬️ ${w.wind || '--'}</span>
@@ -1791,14 +2857,14 @@
           </div>
           <div class="weather-clothing">${(w.clothing || []).map(c => `<span>${c}</span>`).join('')}</div>
           <div class="weather-tip">💡 ${w.tip || ''}</div>
-          <div style="text-align:right;font-size:0.65rem;color:#cbd5e1;margin-top:4px;">更新于 ${w.updated || '--'}</div>
+          <div style="text-align:right;font-size:0.65rem;color:#cbd5e1;margin-top:4px;">${I18N.t('updatedAt')} ${w.updated || '--'}</div>
         </div>
 
         <div class="service-card">
           <div class="service-card-header">
             <div class="card-icon purple">🎭</div>
-            <h3>今日演出时间表</h3>
-            ${upcomingShow ? `<span style="margin-left:auto;font-size:0.68rem;color:#0d9488;">下一场：${upcomingShow.time} ${upcomingShow.name.split('·')[0]}</span>` : ''}
+            <h3>${I18N.t('showsTitle')}</h3>
+            ${upcomingShow ? `<span style="margin-left:auto;font-size:0.68rem;color:#0d9488;">${I18N.t('nextShow') + '：'}${upcomingShow.time} ${upcomingShow.name.split('·')[0]}</span>` : ''}
           </div>
           <div style="max-height:260px;overflow-y:auto;">
             ${shows.map(s => `
@@ -1808,7 +2874,7 @@
                   <div class="show-name">${s.name}</div>
                   <div class="show-meta">📍 ${s.location} · ⏱ ${s.duration} · ${s.note}</div>
                 </div>
-                <span class="show-badge ${s.free ? 'free' : 'paid'}">${s.free ? '免费' : '收费'}</span>
+                <span class="show-badge ${s.free ? 'free' : 'paid'}">${s.free ? I18N.t('free') : I18N.t('paid')}</span>
               </div>
             `).join('')}
           </div>
@@ -1817,10 +2883,10 @@
         <div class="service-card" id="facilityCard">
           <div class="service-card-header">
             <div class="card-icon green">📍</div>
-            <h3>洗手间 / 设施查询</h3>
+            <h3>${I18N.t('facilityTitle')}</h3>
           </div>
           <div class="facility-filters" id="facilityFilters">
-            <button class="facility-filter-btn active" data-type="">全部</button>
+            <button class="facility-filter-btn active" data-type="">${I18N.t('all')}</button>
             ${facilityTypes.map(t => `<button class="facility-filter-btn" data-type="${t}">${t}</button>`).join('')}
           </div>
           <div class="facility-list" id="facilityList">
@@ -1839,36 +2905,36 @@
         <div class="service-card">
           <div class="service-card-header">
             <div class="card-icon red">🆘</div>
-            <h3>紧急求助</h3>
+            <h3>${I18N.t('emergencyTitle')}</h3>
           </div>
           <div class="emergency-msg" id="emergencyMsg"></div>
-          <button class="emergency-btn rescue" id="emergencyBtn" onclick="triggerEmergency()">🚨 一键紧急求助</button>
+          <button class="emergency-btn rescue" id="emergencyBtn" onclick="triggerEmergency()">🚨 ${I18N.t('emergencyBtn')}</button>
           <div class="emergency-contacts" id="emergencyContacts">
             <div class="emergency-contact" onclick="window.open('tel:051085680000')">
               <div class="ec-icon">🆘</div>
               <div class="ec-info">
-                <div class="ec-name">景区救援</div>
+                <div class="ec-name">${I18N.t('rescueTeam')}</div>
                 <div class="ec-phone">0510-85680000</div>
               </div>
             </div>
             <div class="emergency-contact" onclick="window.open('tel:051085680120')">
               <div class="ec-icon">🏥</div>
               <div class="ec-info">
-                <div class="ec-name">景区医务室</div>
+                <div class="ec-name">${I18N.t('medicalCenter')}</div>
                 <div class="ec-phone">0510-85680120</div>
               </div>
             </div>
             <div class="emergency-contact" onclick="window.open('tel:110')">
               <div class="ec-icon">👮</div>
               <div class="ec-info">
-                <div class="ec-name">报警电话</div>
+                <div class="ec-name">${I18N.t('police')}</div>
                 <div class="ec-phone">110</div>
               </div>
             </div>
             <div class="emergency-contact" onclick="window.open('tel:120')">
               <div class="ec-icon">🚑</div>
               <div class="ec-info">
-                <div class="ec-name">急救中心</div>
+                <div class="ec-name">${I18N.t('ambulance')}</div>
                 <div class="ec-phone">120</div>
               </div>
             </div>
@@ -1926,21 +2992,21 @@
     window.triggerEmergency = async function() {
       const btn = document.getElementById('emergencyBtn');
       const msg = document.getElementById('emergencyMsg');
-      btn.textContent = '⏳ 正在发送求助...';
+      btn.textContent = '⏳ ' + I18N.t('emergencySending');
       btn.className = 'emergency-btn rescue';
       btn.disabled = true;
 
       try {
         await fetch(`${API_BASE}/services/emergency`, { method: 'POST' });
-        btn.textContent = '✅ 求助已发送';
+        btn.textContent = '✅ ' + I18N.t('emergencySent');
         btn.className = 'emergency-btn sent';
-        msg.textContent = '🆘 紧急求助已发送！工作人员正在赶来。请保持冷静，在原地等候。如需立即通话，请点击下方电话拨打。';
+        msg.textContent = '🆘 ' + I18N.t('emergencyMsg');
         msg.classList.add('show');
       } catch (_) {
-        btn.textContent = '🚨 一键紧急求助';
+        btn.textContent = '🚨 ' + I18N.t('emergencyBtn');
         btn.className = 'emergency-btn rescue';
         btn.disabled = false;
-        msg.textContent = '网络异常，请直接拨打下方电话求助！';
+        msg.textContent = I18N.t('emergencyNetworkError');
         msg.classList.add('show');
       }
     };
@@ -1967,14 +3033,14 @@
       }
       applyTheme();
       applyFontSize();
-      try { refreshAvatarAnim(); } catch (_) {}
+      try { setAvatarState('idle'); } catch (_) {}
     }
 
     function saveSettings() {
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(appSettings));
       applyTheme();
       applyFontSize();
-      try { refreshAvatarAnim(); } catch (_) {}
+      try { setAvatarState('idle'); } catch (_) {}
     }
 
     function applyTheme() {
@@ -2016,32 +3082,39 @@
       document.getElementById('settTheme').onchange = () => { appSettings.theme = document.getElementById('settTheme').value; saveSettings(); };
       document.getElementById('settFontSize').onchange = () => { appSettings.fontSize = document.getElementById('settFontSize').value; saveSettings(); };
 
+      // 语言切换
+      document.getElementById('settLang').addEventListener('change', (e) => {
+        I18N.switchLocale(e.target.value);
+      });
+      // 初始化语言选择器
+      document.getElementById('settLang').value = I18N.locale;
+
       document.getElementById('settClearHistory').onclick = () => {
         try {
-          if (confirm('确定要清空所有对话历史吗？此操作不可恢复。')) doClear();
+          if (confirm(I18N.t('clearConfirm'))) doClear();
         } catch (_) { doClear(); }
       };
       function doClear() {
         const btn = document.getElementById('settClearHistory');
-        btn.textContent = '⏳ 删除中...';
+        btn.textContent = '⏳ ' + I18N.t('clearing');
         btn.disabled = true;
         fetch(`${API_BASE}/chat/sessions`, { method: 'DELETE' }).then(() => {
           localStorage.removeItem('tour_session_id');
           sessionId = null;
           chatBox.innerHTML = '';
-          addMessage('bot', '对话历史已清空，我是灵山胜境 AI 数字人导览员 👋\n有什么可以帮您的？');
-          document.getElementById('historyList').innerHTML = '<div class="history-empty">暂无对话记录</div>';
-          btn.textContent = '✅ 已清空';
+          addMessage('bot', I18N.t('welcomeAfterClear'));
+          document.getElementById('historyList').innerHTML = '<div class="history-empty"><span data-i18n="noHistory"></span></div>';
+          btn.textContent = '✅ ' + I18N.t('cleared');
           btn.style.color = '#10b981';
           btn.style.borderColor = '#6ee7b7';
           setTimeout(() => {
-            btn.textContent = '清空对话历史';
+            btn.textContent = I18N.t('clearHistory');
             btn.style.color = '#dc2626';
             btn.style.borderColor = '#fca5a5';
             btn.disabled = false;
           }, 2000);
         }).catch(() => {
-          btn.textContent = '❌ 删除失败';
+          btn.textContent = '❌ ' + I18N.t('clearFailed');
           btn.style.color = '#ef4444';
           btn.style.borderColor = '#fca5a5';
           btn.disabled = false;
@@ -2054,12 +3127,16 @@
       document.getElementById('chatView').classList.remove('active');
       document.getElementById('mapView').classList.remove('active');
       document.getElementById('serviceView').classList.remove('active');
+      
+      document.getElementById('photoSpotView').classList.remove('active');
+      document.getElementById('travelogueView').classList.remove('active');
       document.getElementById('settingsView').classList.add('active');
       populateSettingsUI();
     });
 
     document.getElementById('backFromSettingsBtn').addEventListener('click', () => {
       document.getElementById('settingsView').classList.remove('active');
+      document.getElementById('travelogueView').classList.remove('active');
       document.getElementById('chatView').classList.add('active');
       document.getElementById('navChatBtn').classList.add('active');
       chatBox.scrollTop = chatBox.scrollHeight;
@@ -2077,7 +3154,7 @@
         const list = document.getElementById('historyList');
         const sessions = data.sessions || [];
         if (sessions.length === 0) {
-          list.innerHTML = '<div class="history-empty">暂无对话记录</div>';
+          list.innerHTML = '<div class="history-empty"><span data-i18n="noHistory"></span></div>';
           return;
         }
         list.innerHTML = sessions.map(s => {
@@ -2086,7 +3163,7 @@
           return `<div class="history-item${isActive ? ' active' : ''}" data-sid="${s.session_id}">
             <div class="history-title">${escapeHtml(s.title)}</div>
             <div class="history-meta">
-              <span>${s.msg_count} 条消息</span>
+              <span>${s.msg_count}${I18N.t('msgCount')}</span>
             </div>
             <div class="history-time">${time}</div>
           </div>`;
@@ -2132,13 +3209,478 @@
         sessionId = data.session_id;
         localStorage.setItem('tour_session_id', sessionId);
         chatBox.innerHTML = '';
-        addMessage('bot', '新对话已创建！我是灵山胜境 AI 数字人导览员 👋\n有什么可以帮您的？');
+        addMessage('bot', I18N.t('welcomeNewSession'));
         switchToChat();
         loadHistory();
       } catch (_) {}
     }
 
     document.getElementById('newChatBtn').addEventListener('click', createNewSession);
+
+    // ==================== Live2D 数字人 ====================
+    let live2dApp = null;
+    let live2dModel = null;
+
+    async function initLive2D() {
+      const container = document.getElementById('live2dContainer');
+      if (!container || live2dApp) return;
+
+      try {
+        if (typeof PIXI === 'undefined') throw new Error('PIXI 未加载');
+
+        const canvas = document.createElement('canvas');
+        canvas.style.width = '100%';
+        canvas.style.height = '100%';
+        container.appendChild(canvas);
+
+        live2dApp = new PIXI.Application({
+          view: canvas,
+          autoStart: true,
+          backgroundAlpha: 0,
+          width: container.clientWidth,
+          height: container.clientHeight,
+          resolution: 1,
+          preserveDrawingBuffer: true,
+          premultipliedAlpha: true,
+        });
+
+        // 等待渲染器就绪
+        await new Promise(resolve => {
+          live2dApp.renderer.on('postrender', function handler() {
+            live2dApp.renderer.off('postrender', handler);
+            resolve();
+          });
+        });
+
+        const modelPath = './live2d_sdk/public/characters/free/Haru/Haru.model3.json';
+        live2dModel = await PIXI.live2d.Live2DModel.from(modelPath);
+
+        // 修复 pixi-live2d-display v0.5 bug：模型不使用 masking 时 _clippingManager 为 undefined
+        const origUpdate = live2dModel.internalModel.updateWebGLContext;
+        live2dModel.internalModel.updateWebGLContext = function(gl, glContextID) {
+          this.renderer.firstDraw = true;
+          this.renderer._bufferData = { vertex: null, uv: null, index: null };
+          this.renderer.startUp(gl);
+          if (this.renderer._clippingManager) {
+            this.renderer._clippingManager._currentFrameNo = glContextID;
+            this.renderer._clippingManager._maskTexture = undefined;
+          }
+          if (typeof CubismShader_WebGL !== 'undefined') {
+            CubismShader_WebGL.getInstance()._shaderSets = [];
+          }
+        };
+
+        const scale = Math.min(
+          container.clientWidth / live2dModel.width,
+          container.clientHeight / live2dModel.height
+        ) * 1.2;
+
+        live2dModel.scale.set(scale);
+        live2dModel.anchor.set(0.5, 0.5);
+        live2dModel.x = container.clientWidth / 2;
+        live2dModel.y = container.clientHeight / 2;
+
+        live2dApp.stage.addChild(live2dModel);
+
+        window.addEventListener('resize', () => {
+          if (!live2dModel || !container || !live2dApp) return;
+          live2dApp.renderer.resize(container.clientWidth, container.clientHeight);
+          const s = Math.min(
+            container.clientWidth / live2dModel.width,
+            container.clientHeight / live2dModel.height
+          ) * 1.2;
+          live2dModel.scale.set(s);
+          live2dModel.x = container.clientWidth / 2;
+          live2dModel.y = container.clientHeight / 2;
+        });
+
+        console.log('Live2D 模型加载成功');
+      } catch (error) {
+        console.error('Live2D 加载失败:', error);
+        container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#94a3b8;font-size:0.85rem;">' + I18N.t('live2dLoadError') + '</div>';
+      }
+    }
+
+    // ==================== AI 游记 ====================
+    let currentTravelogueId = null;
+    let allTravelogues = [];
+
+    function switchToTravelogue() {
+      document.querySelectorAll('.sidebar-nav-btn.nav').forEach(b => b.classList.remove('active'));
+      document.getElementById('navTravelogueBtn').classList.add('active');
+      document.getElementById('chatView').classList.remove('active');
+      document.getElementById('mapView').classList.remove('active');
+      document.getElementById('serviceView').classList.remove('active');
+      document.getElementById('settingsView').classList.remove('active');
+      document.getElementById('photoSpotView').classList.remove('active');
+      document.getElementById('travelogueView').classList.add('active');
+      loadTravelogueList();
+    }
+
+    async function loadTravelogueList() {
+      try {
+        const res = await fetch(`${API_BASE}/api/travelogues`);
+        const data = await res.json();
+        allTravelogues = data.travelogues || [];
+
+        if (allTravelogues.length === 0) {
+          document.getElementById('tgEmpty').style.display = 'flex';
+          document.getElementById('tgLoading').style.display = 'none';
+          document.getElementById('tgDetail').style.display = 'none';
+          return;
+        }
+
+        renderTravelogueList();
+        if (!currentTravelogueId || !allTravelogues.find(t => t.id === currentTravelogueId)) {
+          currentTravelogueId = allTravelogues[0].id;
+        }
+        await showTravelogueDetail(currentTravelogueId);
+      } catch (e) {
+        console.error('加载游记列表失败:', e);
+        document.getElementById('tgEmpty').style.display = 'flex';
+        document.getElementById('tgLoading').style.display = 'none';
+        document.getElementById('tgDetail').style.display = 'none';
+      }
+    }
+
+    function renderTravelogueList() {
+      const list = document.getElementById('tgList');
+      list.innerHTML = '';
+      const styleLabels = { literary: '文艺', guide: '攻略', relaxed: '随笔' };
+
+      allTravelogues.forEach(t => {
+        const item = document.createElement('div');
+        item.className = 'tg-list-item';
+        if (t.id === currentTravelogueId) item.classList.add('active');
+        item.dataset.tgId = t.id;
+        item.innerHTML = `
+          <div class="tg-li-title">${escapeHtml(t.title)}</div>
+          <div class="tg-li-meta">
+            <span class="tg-li-style">${styleLabels[t.style] || t.style}</span>
+            <span>${new Date(t.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}</span>
+          </div>`;
+        item.addEventListener('click', () => {
+          if (currentTravelogueId === t.id) return;
+          currentTravelogueId = t.id;
+          renderTravelogueList();
+          showTravelogueDetail(t.id);
+        });
+        list.appendChild(item);
+      });
+    }
+
+    async function showTravelogueDetail(tgId) {
+      try {
+        document.getElementById('tgEmpty').style.display = 'none';
+        document.getElementById('tgLoading').style.display = 'block';
+        document.getElementById('tgDetail').style.display = 'none';
+
+        const res = await fetch(`${API_BASE}/api/travelogues/${tgId}`);
+        if (!res.ok) throw new Error('游记不存在');
+        const data = await res.json();
+
+        currentTravelogueId = data.id;
+        document.getElementById('tgTitle').textContent = data.title;
+        document.getElementById('tgDate').textContent = new Date(data.created_at).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' });
+        document.getElementById('tgStyleBadge').textContent = I18N.t('travelogueStyle' + data.style.charAt(0).toUpperCase() + data.style.slice(1));
+
+        const spotTags = document.getElementById('tgSpotTags');
+        spotTags.innerHTML = '';
+        (data.spots_visited || []).forEach(name => {
+          const tag = document.createElement('span');
+          tag.className = 'tg-spot-tag';
+          tag.textContent = name;
+          spotTags.appendChild(tag);
+        });
+
+        const content = document.getElementById('tgContent');
+        if (typeof marked !== 'undefined') {
+          content.innerHTML = marked.parse(data.content);
+        } else {
+          content.textContent = data.content;
+        }
+
+        document.getElementById('tgLoading').style.display = 'none';
+        document.getElementById('tgDetail').style.display = 'block';
+      } catch (e) {
+        console.error('加载游记失败:', e);
+        document.getElementById('tgLoading').style.display = 'none';
+        document.getElementById('tgEmpty').style.display = 'flex';
+        document.getElementById('tgEmpty').querySelector('.tg-empty-text').textContent = I18N.t('travelogueNoData');
+      }
+    }
+
+    function showStyleModal(callback) {
+      const modal = document.createElement('div');
+      modal.className = 'tg-style-modal';
+      modal.innerHTML = `
+        <div class="tg-style-modal-content">
+          <h3>${I18N.t('travelogueStyle')}</h3>
+          <button class="tg-style-option" data-style="literary">
+            <div class="style-name">✨ ${I18N.t('travelogueStyleLiterary')}</div>
+            <div class="style-desc">语言优美，富有诗意，适合分享</div>
+          </button>
+          <button class="tg-style-option" data-style="guide">
+            <div class="style-name">📋 ${I18N.t('travelogueStyleGuide')}</div>
+            <div class="style-desc">路线总结、实用 tips、时间安排</div>
+          </button>
+          <button class="tg-style-option" data-style="relaxed">
+            <div class="style-name">☕ ${I18N.t('travelogueStyleRelaxed')}</div>
+            <div class="style-desc">语气亲切自然，像朋友聊天</div>
+          </button>
+        </div>`;
+      document.body.appendChild(modal);
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) { modal.remove(); callback(null); }
+      });
+      modal.querySelectorAll('.tg-style-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const style = btn.dataset.style;
+          modal.remove();
+          callback(style);
+        });
+      });
+    }
+
+    async function generateTravelogue(style) {
+      if (!sessionId) { showToast(I18N.t('noConversation'), true); return; }
+
+      document.getElementById('tgEmpty').style.display = 'none';
+      document.getElementById('tgLoading').style.display = 'block';
+      document.getElementById('tgDetail').style.display = 'none';
+
+      try {
+        const res = await fetch(`${API_BASE}/chat/travelogue`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId, style: style || 'literary', lang: I18N.locale }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || I18N.t('generateFailed'));
+        }
+        const data = await res.json();
+        currentTravelogueId = data.id;
+        const listRes = await fetch(`${API_BASE}/api/travelogues`);
+        const listData = await listRes.json();
+        allTravelogues = listData.travelogues || [];
+        renderTravelogueList();
+        await showTravelogueDetail(data.id);
+        switchToTravelogue();
+      } catch (e) {
+        console.error('游记生成失败:', e);
+        document.getElementById('tgLoading').style.display = 'none';
+        document.getElementById('tgEmpty').style.display = 'flex';
+        document.getElementById('tgEmpty').querySelector('.tg-empty-text').textContent = I18N.t('generateFailed') + ': ' + e.message;
+      }
+    }
+
+    // 游记页面按钮事件
+    document.getElementById('tgRegenerateBtn').addEventListener('click', () => {
+      showStyleModal((style) => { if (style) generateTravelogue(style); });
+    });
+
+    document.getElementById('tgCopyBtn').addEventListener('click', () => {
+      const text = document.getElementById('tgContent').textContent;
+      navigator.clipboard.writeText(text).then(() => {
+        const btn = document.getElementById('tgCopyBtn');
+        const orig = btn.textContent;
+        btn.textContent = '✅ ' + I18N.t('travelogueCopied');
+        btn.style.color = '#10b981'; btn.style.borderColor = '#6ee7b7';
+        setTimeout(() => { btn.textContent = orig; btn.style.color = ''; btn.style.borderColor = ''; }, 2000);
+      }).catch(() => { showToast(I18N.t('copyFailed'), true); });
+    });
+
+    document.getElementById('tgDeleteBtn').addEventListener('click', async () => {
+      if (!currentTravelogueId) return;
+      if (!confirm(I18N.t('travelogueDeleteConfirm'))) return;
+      try {
+        await fetch(`${API_BASE}/api/travelogues/${currentTravelogueId}`, { method: 'DELETE' });
+        allTravelogues = allTravelogues.filter(t => t.id !== currentTravelogueId);
+        if (allTravelogues.length > 0) {
+          currentTravelogueId = allTravelogues[0].id;
+          renderTravelogueList();
+          await showTravelogueDetail(currentTravelogueId);
+        } else {
+          currentTravelogueId = null;
+          document.getElementById('tgDetail').style.display = 'none';
+          document.getElementById('tgEmpty').style.display = 'flex';
+          document.getElementById('tgEmpty').querySelector('.tg-empty-text').textContent = I18N.t('travelogueEmpty');
+        }
+      } catch (e) { console.error('删除游记失败:', e); }
+    });
+
+    // ==================== 天气 + 穿衣建议 ====================
+    async function loadWeather() {
+      const panel = document.getElementById('weatherPanel');
+      if (!panel) return;
+      try {
+        const res = await fetch(`${API_BASE}/api/weather?lat=31.425&lng=120.10&lang=${I18N.locale}`);
+        if (!res.ok) throw new Error('Weather API error');
+        const data = await res.json();
+        const c = data.current;
+        const mapIcon = {
+          '晴': '☀️', 'Sunny': '☀️', 'Clear': '☀️', '晴れ': '☀️', '맑음': '☀️',
+          '多云': '⛅', 'Cloudy': '⛅', 'Partly cloudy': '⛅', '曇り': '⛅', '흐림': '⛅',
+          '阴': '☁️', 'Overcast': '☁️', '小雨': '🌧️', '雨': '🌧️', 'Rain': '🌧️', 'Light rain': '🌧️',
+          'Mist': '🌫️', 'Fog': '🌫️', '雾': '🌫️', 'Snow': '🌨️', '雪': '🌨️',
+        };
+        let icon = '🌤️';
+        for (const [k, v] of Object.entries(mapIcon)) {
+          if (c.weather_desc.includes(k)) { icon = v; break; }
+        }
+        document.getElementById('weatherIcon').textContent = icon;
+        document.getElementById('weatherTemp').textContent = `${c.temp_c}°C`;
+        document.getElementById('weatherDesc').textContent = c.weather_desc;
+        document.getElementById('weatherFeel').textContent = `${c.feels_like}°C`;
+        document.getElementById('weatherHumidity').textContent = `${c.humidity}%`;
+        if (data.clothing_advice) {
+          document.getElementById('clothingAdvice').style.display = 'block';
+          document.getElementById('clothingText').textContent = data.clothing_advice;
+        }
+      } catch (e) {
+        console.error('天气加载失败:', e);
+        document.getElementById('weatherTemp').textContent = I18N.t('weatherDefault') + '°C';
+        document.getElementById('weatherDesc').textContent = I18N.t('weatherFail');
+      }
+    }
+    loadWeather();
+    // 每30分钟刷新一次天气
+    setInterval(loadWeather, 30 * 60 * 1000);
+
+    // ==================== 停车场定位 ====================
+    const PARKING_KEY = 'tour_parking_pos';
+    let parkingPos = null;
+
+    function loadParkingState() {
+      try {
+        const saved = localStorage.getItem(PARKING_KEY);
+        if (saved) {
+          parkingPos = JSON.parse(saved);
+          document.getElementById('parkingSaveBtn').style.display = 'none';
+          document.getElementById('parkingInfo').style.display = 'block';
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    document.getElementById('parkingSaveBtn').addEventListener('click', () => {
+      if (!navigator.geolocation) {
+        showToast(I18N.t('geoNotSupported'), true);
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          parkingPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          localStorage.setItem(PARKING_KEY, JSON.stringify(parkingPos));
+          document.getElementById('parkingSaveBtn').style.display = 'none';
+          document.getElementById('parkingInfo').style.display = 'block';
+        },
+        (err) => {
+          showToast(I18N.t('geoFailed') + ': ' + err.message, true);
+        },
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+    });
+
+    document.getElementById('parkingGoBtn').addEventListener('click', () => {
+      if (!parkingPos) return;
+      const url = `https://uri.amap.com/navigation?to=${parkingPos.lng},${parkingPos.lat},停车场&mode=walk&coordinate=gaode`;
+      window.open(url, '_blank');
+    });
+
+    document.getElementById('parkingClearBtn').addEventListener('click', () => {
+      parkingPos = null;
+      localStorage.removeItem(PARKING_KEY);
+      document.getElementById('parkingSaveBtn').style.display = 'block';
+      document.getElementById('parkingInfo').style.display = 'none';
+    });
+
+    loadParkingState();
+
+    // ==================== 拍照点推荐 ====================
+    let photoSpotsData = [];
+
+    function switchToPhotoSpots() {
+      document.querySelectorAll('.sidebar-nav-btn.nav').forEach(b => b.classList.remove('active'));
+      document.getElementById('navPhotoSpotBtn').classList.add('active');
+      document.getElementById('chatView').classList.remove('active');
+      document.getElementById('mapView').classList.remove('active');
+      document.getElementById('serviceView').classList.remove('active');
+      document.getElementById('settingsView').classList.remove('active');
+      document.getElementById('travelogueView').classList.remove('active');
+      
+      document.getElementById('photoSpotView').classList.add('active');
+      loadPhotoSpots();
+    }
+
+    async function loadPhotoSpots() {
+      if (photoSpotsData.length > 0) {
+        renderPhotoSpots();
+        return;
+      }
+      document.getElementById('psLoading').style.display = 'block';
+      document.getElementById('psEmpty').style.display = 'none';
+      document.getElementById('psList').style.display = 'none';
+      try {
+        const res = await fetch(`${API_BASE}/api/photo-spots`);
+        const data = await res.json();
+        photoSpotsData = data.spots || [];
+        renderPhotoSpots();
+      } catch (e) {
+        console.error('拍照点加载失败:', e);
+        document.getElementById('psLoading').style.display = 'none';
+        document.getElementById('psEmpty').style.display = 'block';
+      }
+    }
+
+    function renderPhotoSpots() {
+      document.getElementById('psLoading').style.display = 'none';
+      const list = document.getElementById('psList');
+      list.style.display = 'flex';
+      if (photoSpotsData.length === 0) {
+        document.getElementById('psEmpty').style.display = 'block';
+        list.style.display = 'none';
+        return;
+      }
+      document.getElementById('psEmpty').style.display = 'none';
+      list.innerHTML = '';
+      photoSpotsData.forEach(spot => {
+        const card = document.createElement('div');
+        card.className = 'ps-card';
+        const photoItems = spot.photo_spots.map(p => `
+          <div class="ps-photo-item">
+            <div class="ps-photo-tip">${escapeHtml(p.tip)}</div>
+            <div class="ps-photo-meta">
+              <span>📐 ${escapeHtml(p.angle)}</span>
+              <span>🕐 ${escapeHtml(p.best_time)}</span>
+            </div>
+          </div>`).join('');
+
+        card.innerHTML = `
+          <div class="ps-card-header">
+            <span class="ps-card-icon">${spot.icon}</span>
+            <span class="ps-card-name">${escapeHtml(spot.spot_name)}</span>
+            <button class="ps-card-locate" data-lat="${spot.lat}" data-lng="${spot.lng}">📍 ${escapeHtml(I18N.t('photoSpotLocate'))}</button>
+          </div>
+          <div class="ps-photo-items">${photoItems}</div>`;
+        list.appendChild(card);
+      });
+
+      // 定位按钮事件
+      list.querySelectorAll('.ps-card-locate').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const lat = parseFloat(btn.dataset.lat);
+          const lng = parseFloat(btn.dataset.lng);
+          if (map && map.setZoomAndCenter) {
+            map.setZoomAndCenter(16, [lng, lat]);
+            switchToMap();
+          }
+        });
+      });
+    }
+
   </script>
 </body>
 </html>

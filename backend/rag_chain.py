@@ -3,17 +3,19 @@ RAG 向量库构建与问答链模块
 
 功能：
   1. 从 knowledge_base/ 加载 .txt 文档
-  2. 文本分割并向量化（默认本地中文 Embedding，无需联网 API）
+  2. 文本分割并向量化（默认火山 Embedding API，也支持 local/openai）
   3. 持久化到 chroma_db/
   4. 构建 RetrievalQA 问答链（DeepSeek Chat）
 
 环境变量：
-  DEEPSEEK_API_KEY     - 对话模型必填
-  EMBEDDING_PROVIDER   - local（默认）| openai
-  LOCAL_EMBEDDING_MODEL - 本地模型名或路径，默认 BAAI/bge-small-zh-v1.5
+  DEEPSEEK_API_KEY       - 对话模型必填
+  EMBEDDING_PROVIDER     - volcano（默认）| local | openai
+  VOLCANO_API_KEY        - 火山引擎 API Key（Embedding 必填）
+  VOLCANO_BASE_URL       - 火山引擎 Embedding 接口地址
+  VOLCANO_EMBEDDING_MODEL - 火山 Embedding 模型名，默认 doubao-embedding-large
+  LOCAL_EMBEDDING_MODEL  - 本地模型名（仅 provider=local 时使用）
 
-说明：DeepSeek 目前不提供 Embeddings 接口（调用会 404），
-      向量检索使用本地模型，问答仍使用 DeepSeek Chat。
+说明：DeepSeek 不提供 Embeddings 接口，改用火山引擎 Embedding API。
 """
 
 import asyncio
@@ -22,6 +24,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 from dotenv import load_dotenv
+import httpx
 from langchain_classic.chains import RetrievalQA
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain_community.vectorstores import Chroma
@@ -84,22 +87,106 @@ CHROMA_DIR = BASE_DIR / "chroma_db"
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
-EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "local").lower()
+EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "volcano").lower()
 LOCAL_EMBEDDING_MODEL = os.getenv(
     "LOCAL_EMBEDDING_MODEL",
     "BAAI/bge-small-zh-v1.5",
 )
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-ada-002")
+VOLCANO_API_KEY = os.getenv("VOLCANO_API_KEY", "")
+VOLCANO_BASE_URL = os.getenv(
+    "VOLCANO_BASE_URL",
+    "https://ark.cn-beijing.volces.com/api/v3",
+)
+VOLCANO_EMBEDDING_MODEL = os.getenv(
+    "VOLCANO_EMBEDDING_MODEL",
+    "doubao-embedding-text-240715",
+)
 CHAT_MODEL = os.getenv("CHAT_MODEL", "deepseek-chat")
 CHAT_TEMPERATURE = float(os.getenv("CHAT_TEMPERATURE", "0.3"))
+
+
+class VolcanoVisionEmbeddings(Embeddings):
+    """火山多模态 Embedding（兼容 doubao-embedding-vision 等模型）
+
+    火山多模态 Embedding API 的 input 格式为：
+        [{"type": "text", "text": "..."}, ...]
+    与标准 OpenAI Embedding（["string", ...]）不同，需要自定义封装。
+    """
+
+    def __init__(self, api_key: str, base_url: str, model: str, timeout: float = 60.0):
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.timeout = timeout
+        self.headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+    def _call(self, texts: list[str]) -> list[list[float]]:
+        """调用火山多模态 Embedding API，支持批量。"""
+        url = f"{self.base_url}/embeddings/multimodal"
+        payload = {
+            "model": self.model,
+            "input": [{"type": "text", "text": t} for t in texts],
+        }
+        resp = httpx.post(url, headers=self.headers, json=payload, timeout=self.timeout)
+        resp.raise_for_status()
+        result = resp.json()
+        print(f"[DEBUG] 火山 Embedding 响应 keys: {list(result.keys())}")
+
+        raw_data = result["data"]
+        if isinstance(raw_data, list):
+            # 标准格式：data 是列表 [{embedding, index}, ...]
+            items = sorted(raw_data, key=lambda x: x["index"])
+            return [item["embedding"] for item in items]
+        elif isinstance(raw_data, dict) and "embedding" in raw_data:
+            # 单条返回格式：data 直接包含 embedding
+            return [raw_data["embedding"]]
+        else:
+            print(f"[ERROR] 未知响应格式, data type: {type(raw_data)}, 内容: {str(result)[:500]}")
+            raise ValueError(f"火山 Embedding API 返回格式异常: {type(raw_data)}")
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self._call(texts)
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._call([text])[0]
 
 
 def _get_embeddings() -> Embeddings:
     """
     创建 Embeddings：
-    - local（默认）：HuggingFace 本地中文模型，适合景区中文知识库
-    - openai：OpenAI 兼容接口（需自行提供可用的 Embedding 服务，非 DeepSeek）
+    - volcano（默认）：火山引擎 Doubao Embedding API（OpenAI 兼容接口）
+    - openai：OpenAI 兼容接口
+    - local：HuggingFace 本地中文模型
     """
+    if EMBEDDING_PROVIDER == "volcano":
+        if not VOLCANO_API_KEY:
+            raise ValueError("EMBEDDING_PROVIDER=volcano 时需设置 VOLCANO_API_KEY")
+        print(f"[RAG] 使用火山 Embedding: {VOLCANO_EMBEDDING_MODEL} @ {VOLCANO_BASE_URL}")
+
+        # 火山多模态 Embedding（如 doubao-embedding-vision）input 格式与标准 OpenAI 不同
+        # 通过模型名包含 vision 或环境变量 VOLCANO_EMBEDDING_MULTIMODAL=1 启用自定义封装
+        is_multimodal = (
+            "vision" in VOLCANO_EMBEDDING_MODEL.lower()
+            or os.getenv("VOLCANO_EMBEDDING_MULTIMODAL", "").lower() in ("1", "true", "yes")
+        )
+        if is_multimodal:
+            print("[RAG] 检测到多模态 Embedding，使用自定义 VolcanoVisionEmbeddings")
+            return VolcanoVisionEmbeddings(
+                api_key=VOLCANO_API_KEY,
+                base_url=VOLCANO_BASE_URL,
+                model=VOLCANO_EMBEDDING_MODEL,
+            )
+
+        return OpenAIEmbeddings(
+            model=VOLCANO_EMBEDDING_MODEL,
+            openai_api_key=VOLCANO_API_KEY,
+            openai_api_base=VOLCANO_BASE_URL,
+        )
+
     if EMBEDDING_PROVIDER == "openai":
         if not DEEPSEEK_API_KEY:
             raise ValueError("EMBEDDING_PROVIDER=openai 时需设置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY")
@@ -112,11 +199,10 @@ def _get_embeddings() -> Embeddings:
             openai_api_base=base_url,
         )
 
-    # 默认：本地模型（DeepSeek 无 Embedding API，避免 404）
+    # local：本地模型
     from langchain_huggingface import HuggingFaceEmbeddings
 
     model_name = LOCAL_EMBEDDING_MODEL
-    # 若指向本地目录（如已有的 m3e-base），直接使用
     if Path(model_name).is_dir():
         print(f"[RAG] 使用本地 Embedding 目录: {model_name}")
     else:
@@ -224,11 +310,15 @@ def rebuild_vectordb() -> RetrievalQA:
     return create_qa_chain(db)
 
 
-async def astream_rag_answer(query: str, db: Chroma | None = None, interest: str = "general") -> AsyncIterator[str]:
+async def astream_rag_answer(
+    query: str, db: Chroma | None = None, interest: str = "general",
+    image_base64: str | None = None,
+) -> AsyncIterator[str]:
     """
     RAG 流式问答：先检索知识库，再逐 token 流式生成回答。
     用于 SSE 打字机效果。
     interest 支持: history, nature, family, quick, general
+    image_base64: 可选，Base64 编码的图片（多模态识别）
     """
     if db is None:
         db = load_vectordb()
@@ -246,10 +336,24 @@ async def astream_rag_answer(query: str, db: Chroma | None = None, interest: str
 
     yield f'{{"type":"expression","expression":"thinking"}}\n'
 
-    async for chunk in llm.astream(prompt_text):
-        content = chunk.content if hasattr(chunk, "content") else str(chunk)
-        if content:
-            yield content
+    if image_base64:
+        # 多模态：构建 vision 消息格式
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt_text},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}},
+            ],
+        }]
+        async for chunk in llm.astream(messages):
+            content = chunk.content if hasattr(chunk, "content") else str(chunk)
+            if content:
+                yield content
+    else:
+        async for chunk in llm.astream(prompt_text):
+            content = chunk.content if hasattr(chunk, "content") else str(chunk)
+            if content:
+                yield content
 
 
 if __name__ == "__main__":

@@ -42,3 +42,12 @@ backend/temp/
 
 # Documentation
 # docs/
+
+# Node.js
+node_modules/
+package-lock.json
+
+# Test / Temp
+backend/test_env.py
+fix.js
+start.bat

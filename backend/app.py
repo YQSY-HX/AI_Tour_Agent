@@ -9,7 +9,7 @@ AI 数字人景区导览服务 - FastAPI 后端
   - GET  /admin/documents    知识库文件列表
   - DELETE /admin/documents/{filename}  删除知识库文件并重建
   - GET  /admin/stats        数据大屏模拟统计
-  - POST /voice-to-text      语音识别（faster-whisper）
+  - POST /voice-to-text      语音识别（火山引擎 ASR）
   - POST /text-to-speech     语音合成（edge-tts，支持声音选择）
   - POST /admin/sentiment    对话情感分析
 
@@ -28,6 +28,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import httpx
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile  # noqa: F401
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,6 +44,7 @@ from rag_chain import (
     DEEPSEEK_BASE_URL,
     KNOWLEDGE_DIR,
     CHAT_MODEL,
+    VOLCANO_API_KEY,
     INTEREST_CONFIG,
     create_qa_chain,
     load_vectordb,
@@ -71,6 +73,8 @@ class ChatTextRequest(BaseModel):
     question: str = Field(..., min_length=1, description="游客提问")
     session_id: str | None = Field(None, description="会话 ID，不传则自动生成")
     interest: str = Field("general", description="游客兴趣标签: history/nature/family/quick/general")
+    lang: str = Field("zh", description="回复语言: zh/en/ja/ko")
+    image: str | None = Field(None, description="Base64 编码的图片（多模态识别）")
 
 
 class ChatTextResponse(BaseModel):
@@ -101,6 +105,35 @@ class FeedbackRequest(BaseModel):
     answer: str = Field("", description="AI 回答")
     rating: str = Field(..., description="评价: good 或 bad")
     comment: str = Field("", description="补充反馈（选填）")
+
+
+class RoutePlanRequest(BaseModel):
+    preference: str = Field("general", description="路线偏好: culture/photo/zen/family/general")
+    duration: str = Field("half_day", description="游览时长: 1h/2h/half_day/full_day")
+    spot_ids: list[str] = Field(default_factory=list, description="用户指定景点 ID 列表，为空则 AI 推荐")
+    lang: str = Field("zh", description="回复语言: zh/en/ja/ko")
+
+
+class RoutePlanResponse(BaseModel):
+    title: str
+    spots: list[dict]  # [{id, name, lat, lng, icon, desc, reason}]
+    tips: str
+
+
+class TravelogueRequest(BaseModel):
+    session_id: str = Field(..., description="会话 ID")
+    style: str = Field("literary", description="游记风格: literary/guide/relaxed")
+    lang: str = Field("zh", description="回复语言: zh/en/ja/ko")
+
+
+class TravelogueResponse(BaseModel):
+    id: str
+    session_id: str
+    title: str
+    content: str
+    style: str
+    spots_visited: list[str]
+    created_at: str
 
 
 # ---------- 模拟用户数据（实际项目中应从数据库读取） ----------
@@ -152,6 +185,17 @@ def init_db():
             rating TEXT NOT NULL,
             comment TEXT DEFAULT '',
             timestamp TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS travelogues (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            style TEXT DEFAULT 'literary',
+            spots_json TEXT DEFAULT '[]',
+            created_at TEXT NOT NULL
         )
     """)
     conn.commit()
@@ -208,16 +252,20 @@ def format_history_for_prompt(session_id: str) -> str:
     return "\n".join(lines)
 
 
-def build_query_with_history(question: str, session_id: str) -> str:
+def build_query_with_history(question: str, session_id: str, lang: str = "zh") -> str:
     """把历史 + 当前问题拼成增强查询，供 RetrievalQA 使用"""
     history_text = format_history_for_prompt(session_id)
+    lang_map = {"zh": "中文", "en": "English", "ja": "日本語", "ko": "한국어"}
+    lang_name = lang_map.get(lang, "中文")
+    lang_instruction = f"\n【重要：请用{lang_name}回答用户的问题，不要使用其他语言。】\n"
     if history_text:
         return (
             f"以下是之前的对话记录，请结合上下文回答最后一个问题。\n"
             f"---对话历史---\n{history_text}\n"
             f"---当前问题---\n{question}"
+            f"{lang_instruction}"
         )
-    return question
+    return question + lang_instruction
 
 
 # ---------- 启动生命周期 ----------
@@ -250,7 +298,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="AI 数字人景区导览服务",
-    description="RAG + DeepSeek + 语音交互",
+    description="RAG + DeepSeek + 火山引擎 ASR/TTS",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -263,7 +311,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # ---------- 后台任务：重建向量库 ----------
 def _rebuild_task():
@@ -488,7 +535,7 @@ async def chat_text(req: ChatTextRequest):
         )
 
     session_id = get_or_create_session(req.session_id)
-    enhanced_query = build_query_with_history(req.question, session_id)
+    enhanced_query = build_query_with_history(req.question, session_id, req.lang)
 
     try:
         result = await asyncio.to_thread(qa_chain.invoke, {"query": enhanced_query})
@@ -513,7 +560,7 @@ def _sse_line(payload: dict) -> str:
 @app.post("/chat/text/stream")
 async def chat_text_stream(req: ChatTextRequest):
     """
-    文本问答 SSE 流式接口（打字机效果）
+    文本问答 SSE 流式接口（打字机效果），支持多模态图片识别
 
     事件类型：
       - expression: {"type":"expression","expression":"thinking"|"speaking"|"idle"}
@@ -528,13 +575,13 @@ async def chat_text_stream(req: ChatTextRequest):
         )
 
     session_id = get_or_create_session(req.session_id)
-    enhanced_query = build_query_with_history(req.question, session_id)
+    enhanced_query = build_query_with_history(req.question, session_id, req.lang)
     append_memory(session_id, "user", req.question)
 
     async def event_generator():
         parts: list[str] = []
         try:
-            async for chunk in astream_rag_answer(enhanced_query, vector_db, req.interest):
+            async for chunk in astream_rag_answer(enhanced_query, vector_db, req.interest, req.image):
                 if chunk.startswith('{"type":"expression"'):
                     yield _sse_line({"type": "expression", "expression": "thinking"})
                     continue
@@ -676,24 +723,23 @@ async def admin_stats():
     }
 
 
-# ==================== 4. 语音识别 ASR ====================
-_whisper_model = None
-
-
-def get_whisper_model():
-    """懒加载 faster-whisper 模型（base, CPU）"""
-    global _whisper_model
-    if _whisper_model is None:
-        from faster_whisper import WhisperModel
-        _whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
-    return _whisper_model
+# ==================== 4. 语音识别 ASR（火山引擎） ====================
+# 火山引擎 ASR 配置
+ASR_API_KEY = os.getenv("VOLCANO_ASR_API_KEY", os.getenv("VOLCANO_API_KEY", ""))
+ASR_APP_ID = os.getenv("VOLCANO_ASR_APP_ID", "")
+ASR_CLUSTER = os.getenv("VOLCANO_ASR_CLUSTER", "volcengine_streaming_common")
+ASR_API_URL = "https://openspeech.bytedance.com/api/v1/asr"
 
 
 @app.post("/voice-to-text")
 async def voice_to_text(file: UploadFile = File(...)):
     """
-    接收音频文件，使用 faster-whisper 识别为文字
+    接收音频文件，使用火山引擎 ASR 识别为文字
+    支持的格式：wav, mp3, m4a, ogg 等
     """
+    if not ASR_API_KEY or not ASR_APP_ID:
+        raise HTTPException(status_code=500, detail="未配置 VOLCANO_ASR_API_KEY / VOLCANO_ASR_APP_ID")
+
     suffix = Path(file.filename or "audio.wav").suffix or ".wav"
     tmp_path = None
     try:
@@ -701,11 +747,32 @@ async def voice_to_text(file: UploadFile = File(...)):
             tmp.write(await file.read())
             tmp_path = tmp.name
 
-        model = get_whisper_model()
-        segments, _ = await asyncio.to_thread(
-            model.transcribe, tmp_path, language="zh"
-        )
-        text = "".join(seg.text for seg in segments).strip()
+        import requests
+        headers = {
+            "Authorization": f"Bearer; {ASR_API_KEY}",
+        }
+        data = {
+            "app": {"appid": ASR_APP_ID, "cluster": ASR_CLUSTER},
+            "user": {"uid": "tourist"},
+            "audio": {"format": suffix.lstrip(".")},
+        }
+        with open(tmp_path, "rb") as audio_file:
+            files = {"audio": (Path(tmp_path).name, audio_file, f"audio/{suffix.lstrip('.')}")}
+            resp = await asyncio.to_thread(
+                requests.post,
+                ASR_API_URL,
+                data={"request": json.dumps(data)},
+                files=files,
+                headers=headers,
+                timeout=30,
+            )
+
+        if resp.status_code != 200:
+            logger.error(f"火山 ASR 失败: {resp.status_code} {resp.text}")
+            raise HTTPException(status_code=500, detail=f"语音识别失败: {resp.text}")
+
+        result = resp.json()
+        text = result.get("result", [{}])[0].get("text", "") if result.get("result") else ""
         return {"text": text or "(未识别到内容)"}
     except Exception as e:
         logger.exception("语音识别失败")
@@ -716,12 +783,21 @@ async def voice_to_text(file: UploadFile = File(...)):
 
 
 # ==================== 5. 语音合成 TTS ====================
+TTS_PROVIDER = os.getenv("TTS_PROVIDER", "edge").lower()  # edge | volcano
+TTS_VOLCANO_VOICE = os.getenv("TTS_VOLCANO_VOICE", "zh_female_xiaoling_tob")  # 火山 TTS 音色
+
+
 @app.post("/text-to-speech")
 async def text_to_speech(req: TTSRequest):
     """
-    使用 edge-tts 合成中文语音，返回 mp3 文件
-    声音默认：zh-CN-XiaoxiaoNeural，可选 zh-CN-YunxiNeural（男声）等
+    语音合成，返回 mp3 文件。
+    - TTS_PROVIDER=edge（默认）：使用 Microsoft Edge TTS，免费无需 API Key
+    - TTS_PROVIDER=volcano：使用火山引擎 TTS，需配置 VOLCANO_API_KEY
     """
+    if TTS_PROVIDER == "volcano":
+        return await _tts_volcano(req)
+
+    # 默认：Edge TTS（免费）
     try:
         import edge_tts
     except ImportError:
@@ -747,6 +823,41 @@ async def text_to_speech(req: TTSRequest):
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         raise HTTPException(status_code=500, detail=f"语音合成失败: {e}")
+
+
+async def _tts_volcano(req: TTSRequest):
+    """火山引擎 TTS"""
+    if not VOLCANO_API_KEY:
+        raise HTTPException(status_code=500, detail="未配置 VOLCANO_API_KEY")
+    import requests
+    tts_url = "https://openspeech.bytedance.com/api/v1/tts"
+    headers = {"Authorization": f"Bearer; {VOLCANO_API_KEY}"}
+    payload = {
+        "app": {"appid": os.getenv("VOLCANO_TTS_APP_ID", ASR_APP_ID)},
+        "user": {"uid": "tourist"},
+        "audio": {"voice_type": TTS_VOLCANO_VOICE, "encoding": "mp3"},
+        "request": {"text": req.text, "speed_ratio": 1.0},
+    }
+    try:
+        resp = await asyncio.to_thread(
+            requests.post, tts_url, json=payload, headers=headers, timeout=30
+        )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=500, detail=f"火山 TTS 失败: {resp.text}")
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+        tmp.write(resp.content)
+        tmp_path = tmp.name
+        tmp.close()
+        return FileResponse(
+            tmp_path,
+            media_type="audio/mpeg",
+            filename="speech.mp3",
+            background=None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"火山 TTS 失败: {e}")
 
 
 # ==================== 6. 情感分析 ====================
@@ -1051,6 +1162,512 @@ async def get_emergency_contacts():
     return {"contacts": EMERGENCY_CONTACTS}
 
 
+# ==================== 游览路线规划 ====================
+# 所有景点坐标数据（GCJ-02），前端已硬编码，后端同步一份用于路线规划
+SPOT_DATA: list[dict[str, Any]] = [
+    {"id": "LS-001", "name": "灵山大照壁", "lat": 31.421388, "lng": 120.102499, "icon": "🏛️", "desc": "华夏第一壁，景区入口",
+     "photo_spots": [{"tip": "正前方全景拍摄，将大照壁与蓝天白云同框", "angle": "正面全景", "best_time": "上午顺光"}]},
+    {"id": "LS-002", "name": "五明桥", "lat": 31.421749, "lng": 120.102248, "icon": "🌉", "desc": "五座汉白玉石拱桥",
+     "photo_spots": [{"tip": "站在桥中央回拍入口方向，利用桥面延伸线构图", "angle": "仰拍桥身", "best_time": "清晨或黄昏"}]},
+    {"id": "LS-003", "name": "佛足坛", "lat": 31.422725, "lng": 120.101497, "icon": "👣", "desc": "朝圣祈福核心节点",
+     "photo_spots": [{"tip": "低角度拍摄佛足印，突出石刻纹理与庄严感", "angle": "低角度特写", "best_time": "全天"}]},
+    {"id": "LS-004", "name": "五智门", "lat": 31.423055, "lng": 120.101292, "icon": "⛩️", "desc": "五门六柱石牌坊",
+     "photo_spots": [{"tip": "穿过门洞拍摄远处大佛，形成框景构图", "angle": "框景构图", "best_time": "下午逆光剪影"}]},
+    {"id": "LS-005", "name": "菩提大道", "lat": 31.423182, "lng": 120.101143, "icon": "🌳", "desc": "禅意步道",
+     "photo_spots": [{"tip": "利用道路两侧银杏树形成纵深透视感", "angle": "纵深透视", "best_time": "秋季银杏金黄时"}]},
+    {"id": "LS-006", "name": "九龙灌浴", "lat": 31.424601, "lng": 120.099984, "icon": "⛲", "desc": "大型音乐动态群雕",
+     "photo_spots": [{"tip": "喷水表演时连拍，捕捉水花与阳光形成的彩虹", "angle": "正面+特写", "best_time": "表演时段（10:00/11:30/14:00/15:30）"}]},
+    {"id": "LS-007", "name": "降魔浮雕", "lat": 31.425559, "lng": 120.099569, "icon": "🗿", "desc": "佛陀觉悟成道故事",
+     "photo_spots": [{"tip": "侧面拍摄利用光影突出浮雕层次感", "angle": "侧面45°", "best_time": "上午侧光"}]},
+    {"id": "LS-008", "name": "阿育王柱", "lat": 31.426188, "lng": 120.099261, "icon": "🪨", "desc": "古印度石柱复刻",
+     "photo_spots": [{"tip": "仰拍石柱顶部狮像，蓝天为背景", "angle": "仰拍", "best_time": "晴天上午"}]},
+    {"id": "LS-009", "name": "百子戏弥勒", "lat": 31.427190, "lng": 120.098844, "icon": "🧸", "desc": "9吨青铜群雕",
+     "photo_spots": [{"tip": "环绕拍摄，捕捉每个小童的生动表情", "angle": "环绕多角度", "best_time": "全天"}]},
+    {"id": "LS-010", "name": "祥符禅寺", "lat": 31.427949, "lng": 120.098012, "icon": "🏯", "desc": "唐代千年古刹",
+     "photo_spots": [{"tip": "寺前香炉烟雾缭绕时拍摄，营造禅意氛围", "angle": "正面+香炉前景", "best_time": "清晨香火旺盛时"}]},
+    {"id": "LS-011", "name": "灵山大佛", "lat": 31.430194, "lng": 120.096477, "icon": "🗽", "desc": "88米青铜释迦牟尼立像",
+     "photo_spots": [
+         {"tip": "登顶后从大佛脚下回拍全景，俯瞰整个景区", "angle": "俯瞰全景", "best_time": "晴天能见度高时"},
+         {"tip": "抱佛脚雕像处，触摸佛脚祈福合影", "angle": "近景合影", "best_time": "全天"},
+         {"tip": "九龙灌浴广场远拍大佛，水景与佛像同框", "angle": "远景+水景", "best_time": "表演时段"}
+     ]},
+    {"id": "LS-012", "name": "佛教文化博览馆", "lat": 31.427856, "lng": 120.105632, "icon": "🏛️", "desc": "万佛殿与佛教史展",
+     "photo_spots": [{"tip": "万佛殿内拍摄穹顶万佛，广角镜头最佳", "angle": "仰拍穹顶", "best_time": "室内全天"}]},
+    {"id": "LS-013", "name": "灵山梵宫", "lat": 31.428218, "lng": 120.102420, "icon": "🕌", "desc": "东方卢浮宫",
+     "photo_spots": [
+         {"tip": "梵宫正面全景，将金顶与蓝天同框", "angle": "正面全景", "best_time": "上午顺光"},
+         {"tip": "宫内穹顶壁画，仰拍展示华丽天花", "angle": "仰拍穹顶", "best_time": "室内全天"},
+         {"tip": "梵宫外廊柱光影，利用廊柱形成纵深构图", "angle": "廊柱透视", "best_time": "午后光影斑驳时"}
+     ]},
+    {"id": "LS-014", "name": "五印坛城", "lat": 31.424676, "lng": 120.103054, "icon": "🏔️", "desc": "小布达拉宫",
+     "photo_spots": [{"tip": "湖对面拍摄坛城倒影，对称构图", "angle": "远景+倒影", "best_time": "无风清晨或傍晚"}]},
+    {"id": "LS-015", "name": "曼飞龙塔", "lat": 31.426070, "lng": 120.104609, "icon": "🕌", "desc": "南传佛教白塔",
+     "photo_spots": [{"tip": "蓝天白云下白塔群组，色彩对比强烈", "angle": "正面全景", "best_time": "晴天上午"}]},
+    {"id": "LS-016", "name": "无尽意斋", "lat": 31.428768, "lng": 120.096987, "icon": "🏡", "desc": "赵朴初纪念馆",
+     "photo_spots": [{"tip": "庭院内拍摄江南园林小景，假山流水", "angle": "园林小品", "best_time": "午后柔和光线"}]},
+    {"id": "NH-001", "name": "拈花广场", "lat": 31.420040, "lng": 120.076954, "icon": "🌸", "desc": "拈花湾入口",
+     "photo_spots": [{"tip": "入口牌坊处拍摄，记录拈花湾之旅起点", "angle": "正面", "best_time": "全天"}]},
+    {"id": "NH-002", "name": "梵天花海", "lat": 31.415904, "lng": 120.075421, "icon": "🌻", "desc": "30000㎡四季花海",
+     "photo_spots": [
+         {"tip": "花海中的人像拍摄，蹲下与花同高营造花海包围感", "angle": "低角度人像", "best_time": "花季上午或傍晚"},
+         {"tip": "无人机视角俯瞰花海图案（如允许）", "angle": "俯瞰", "best_time": "花季晴天"}
+     ]},
+    {"id": "NH-003", "name": "香月花街", "lat": 31.416822, "lng": 120.073636, "icon": "🏮", "desc": "800米禅意商业街",
+     "photo_spots": [{"tip": "华灯初上时拍摄灯笼长廊，唐风禅意十足", "angle": "纵深透视", "best_time": "傍晚至入夜"}]},
+    {"id": "NH-004", "name": "拈花堂", "lat": 31.417841, "lng": 120.078339, "icon": "🧘", "desc": "静心禅堂",
+     "photo_spots": [{"tip": "堂前静坐人像，禅意剪影", "angle": "剪影效果", "best_time": "黄昏逆光"}]},
+    {"id": "NH-005", "name": "五灯湖", "lat": 31.418665, "lng": 120.075312, "icon": "🌊", "desc": "禅行灯光秀",
+     "photo_spots": [{"tip": "灯光秀时拍摄湖面倒影与水幕投影", "angle": "水面倒影", "best_time": "夜间表演时段"}]},
+    {"id": "NH-006", "name": "鹿鸣谷", "lat": 31.424319, "lng": 120.079449, "icon": "🦌", "desc": "山林幽谷",
+     "photo_spots": [{"tip": "林间小道拍摄，利用晨雾或阳光透过树叶的光斑", "angle": "林间光影", "best_time": "清晨"}]},
+]
+
+SPOT_ID_MAP: dict[str, dict[str, Any]] = {s["id"]: s for s in SPOT_DATA}
+
+ROUTE_PREFERENCE_MAP = {
+    "culture": "历史文化深度游，偏好古刹、寺庙、文化展馆、名人故居类景点",
+    "photo": "网红打卡拍照游，偏好外观壮丽、有视觉冲击力、适合拍照的景点",
+    "zen": "禅修静心体验游，偏好禅堂、山林、静谧湖泊、茶室类景点",
+    "family": "亲子互动欢乐游，偏好有趣味性、互动性强、适合家庭游玩的项目",
+    "general": "经典全景游览，涵盖灵山胜境和拈花湾的代表性景点，路线合理不走回头路",
+}
+
+DURATION_MAP = {
+    "1h": "约1小时，推荐3-4个核心景点",
+    "2h": "约2小时，推荐5-6个景点",
+    "half_day": "半天（约3-4小时），推荐8-10个景点，含一次休息/用餐",
+    "full_day": "全天（约6-8小时），推荐12-15个景点，含午休与用餐",
+}
+
+
+@app.post("/api/route/plan", response_model=RoutePlanResponse)
+async def route_plan(req: RoutePlanRequest):
+    """游览路线规划：根据偏好和时长，AI 推荐最优游览顺序"""
+    if not DEEPSEEK_API_KEY:
+        raise HTTPException(status_code=500, detail="未配置 DEEPSEEK_API_KEY")
+
+    # 筛选候选景点
+    if req.spot_ids:
+        candidate_spots = [SPOT_ID_MAP[sid] for sid in req.spot_ids if sid in SPOT_ID_MAP]
+    else:
+        candidate_spots = SPOT_DATA
+
+    if len(candidate_spots) < 2:
+        raise HTTPException(status_code=400, detail="候选景点不足，至少需要2个")
+
+    preference_desc = ROUTE_PREFERENCE_MAP.get(req.preference, ROUTE_PREFERENCE_MAP["general"])
+    duration_desc = DURATION_MAP.get(req.duration, DURATION_MAP["half_day"])
+
+    spot_list = "\n".join([
+        f"- {s['id']}: {s['icon']} {s['name']} (lat={s['lat']},lng={s['lng']}) {s['desc']}"
+        for s in candidate_spots
+    ])
+
+    llm = ChatOpenAI(
+        model=CHAT_MODEL,
+        api_key=DEEPSEEK_API_KEY,
+        base_url=DEEPSEEK_BASE_URL,
+        temperature=0.3,
+    )
+
+    lang_map = {"zh": "中文", "en": "English", "ja": "日本語", "ko": "한국어"}
+    lang_name = lang_map.get(req.lang, "中文")
+
+    prompt = f"""你是景区金牌导游，请为游客规划一条游览路线。请用{lang_name}输出。输出纯 JSON（不要其他文字）：
+
+要求：
+- 偏好：{preference_desc}
+- 时间：{duration_desc}
+- 路线必须按地理顺路排序，避免折返
+- 每个景点附上推荐理由（10字以内）
+
+候选景点：
+{spot_list}
+
+JSON 格式：
+{{
+  "title": "<路线名称，有吸引力，10字以内>",
+  "spots": [{{"id":"LS-001","reason":"<理由>"}}, ...],
+  "tips": "<游览小贴士，30字以内>"
+}}
+"""
+    try:
+        resp = await llm.ainvoke(prompt)
+        raw = resp.content if hasattr(resp, "content") else str(resp)
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        data = json.loads(raw[start:end])
+
+        # 组装带完整坐标的景点列表
+        ordered_spots = []
+        for item in data.get("spots", []):
+            spot = SPOT_ID_MAP.get(item["id"])
+            if spot:
+                ordered_spots.append({
+                    "id": spot["id"],
+                    "name": spot["name"],
+                    "lat": spot["lat"],
+                    "lng": spot["lng"],
+                    "icon": spot["icon"],
+                    "desc": spot["desc"],
+                    "reason": item.get("reason", ""),
+                })
+
+        if len(ordered_spots) < 2:
+            ordered_spots = [{
+                "id": s["id"], "name": s["name"], "lat": s["lat"],
+                "lng": s["lng"], "icon": s["icon"], "desc": s["desc"],
+                "reason": "经典路线"
+            } for s in candidate_spots[:6]]
+
+        return RoutePlanResponse(
+            title=data.get("title", "推荐游览路线"),
+            spots=ordered_spots,
+            tips=data.get("tips", "祝您游览愉快！"),
+        )
+    except Exception as e:
+        logger.exception("路线规划失败")
+        # 兜底：按地理坐标排序
+        fallback = sorted(candidate_spots, key=lambda s: (s["lng"], s["lat"]))
+        fallback = fallback[:8]
+        return RoutePlanResponse(
+            title="经典游览路线（备选）",
+            spots=[{
+                "id": s["id"], "name": s["name"], "lat": s["lat"],
+                "lng": s["lng"], "icon": s["icon"], "desc": s["desc"],
+                "reason": "经典顺路"
+            } for s in fallback],
+            tips="建议早出发，避开人流高峰",
+        )
+
+
+# ==================== AI 游记生成 ====================
+STYLE_MAP = {
+    "literary": "文艺游记风格，语言优美，富有诗意和画面感，适合分享到朋友圈",
+    "guide": "实用攻略风格，侧重路线总结、实用 tips、时间安排、花费参考",
+    "relaxed": "轻松随笔风格，语气亲切自然，像朋友聊天一样分享旅途见闻",
+}
+
+
+@app.post("/chat/travelogue", response_model=TravelogueResponse)
+async def generate_travelogue(req: TravelogueRequest):
+    """根据会话历史生成 AI 游记"""
+    if not DEEPSEEK_API_KEY:
+        raise HTTPException(status_code=500, detail="未配置 DEEPSEEK_API_KEY")
+
+    # 1. 拉取会话对话记录
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT question, answer FROM conversations WHERE session_id = ? ORDER BY id ASC",
+        (req.session_id,),
+    ).fetchall()
+    conn.close()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="该会话没有对话记录")
+
+    # 2. 检查是否已有游记
+    conn = sqlite3.connect(DB_PATH)
+    existing = conn.execute(
+        "SELECT id, title, content, style, spots_json, created_at FROM travelogues WHERE session_id = ?",
+        (req.session_id,),
+    ).fetchone()
+    if existing:
+        conn.close()
+        return TravelogueResponse(
+            id=existing["id"],
+            session_id=req.session_id,
+            title=existing["title"],
+            content=existing["content"],
+            style=existing["style"],
+            spots_visited=json.loads(existing["spots_json"]),
+            created_at=existing["created_at"],
+        )
+    conn.close()
+
+    # 3. 提取对话中涉及的景点
+    all_text = " ".join([r["question"] + " " + r["answer"] for r in rows])
+    visited_spots = []
+    for spot in SPOT_DATA:
+        if spot["name"] in all_text:
+            visited_spots.append(spot)
+
+    # 4. 构建对话摘要
+    conversation_summary = []
+    for r in rows:
+        q = r["question"][:200]
+        a = r["answer"][:300]
+        conversation_summary.append(f"游客：{q}\n导览员：{a}")
+    summary_text = "\n\n".join(conversation_summary[-20:])  # 最多取最近20轮
+
+    # 5. 景点信息
+    spot_info = "\n".join([
+        f"- {s['icon']} {s['name']}：{s['desc']}"
+        for s in visited_spots
+    ]) if visited_spots else "（根据对话内容推断）"
+
+    # 6. 风格描述
+    style_desc = STYLE_MAP.get(req.style, STYLE_MAP["literary"])
+
+    lang_map = {"zh": "中文", "en": "English", "ja": "日本語", "ko": "한국어"}
+    lang_name = lang_map.get(req.lang, "中文")
+
+    llm = ChatOpenAI(
+        model=CHAT_MODEL,
+        api_key=DEEPSEEK_API_KEY,
+        base_url=DEEPSEEK_BASE_URL,
+        temperature=0.7,
+    )
+
+    prompt = f"""你是一位优秀的旅行作家。请根据以下游客与 AI 导览员的对话记录，撰写一篇精彩的游记。
+
+要求：
+- 用{lang_name}书写
+- 风格：{style_desc}
+- 结构：标题（用 # 开头）→ 开篇引入 → 按游览顺序逐景点描写 → 旅行感悟结尾
+- 融入景点文化内涵和历史背景，让读者有身临其境之感
+- 字数控制在 800-1500 字
+- 使用 Markdown 格式，景点名称用 **加粗**
+
+游客游览过的景点参考：
+{spot_info}
+
+对话记录：
+{summary_text}
+
+请直接输出游记内容，不要输出任何前缀说明。"""
+
+    try:
+        resp = await llm.ainvoke(prompt)
+        content = resp.content if hasattr(resp, "content") else str(resp)
+
+        # 7. 提取标题（取第一个 # 开头的行）
+        title = "灵山游记"
+        for line in content.strip().split("\n"):
+            line = line.strip()
+            if line.startswith("# "):
+                title = line[2:].strip()
+                break
+            if line.startswith("#"):
+                title = line[1:].strip()
+                break
+
+        # 8. 存储游记
+        travelogue_id = str(uuid.uuid4())
+        spot_names = [s["name"] for s in visited_spots]
+        now = datetime.now().isoformat()
+
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute(
+            "INSERT INTO travelogues (id, session_id, title, content, style, spots_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (travelogue_id, req.session_id, title, content, req.style, json.dumps(spot_names, ensure_ascii=False), now),
+        )
+        conn.commit()
+        conn.close()
+
+        return TravelogueResponse(
+            id=travelogue_id,
+            session_id=req.session_id,
+            title=title,
+            content=content,
+            style=req.style,
+            spots_visited=spot_names,
+            created_at=now,
+        )
+    except Exception as e:
+        logger.exception("游记生成失败")
+        raise HTTPException(status_code=500, detail=f"游记生成失败: {e}")
+
+
+@app.get("/api/travelogues")
+async def list_travelogues(session_id: str = ""):
+    """获取游记列表，可按 session_id 筛选"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    if session_id:
+        rows = conn.execute(
+            "SELECT id, session_id, title, style, spots_json, created_at FROM travelogues WHERE session_id = ? ORDER BY created_at DESC",
+            (session_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, session_id, title, style, spots_json, created_at FROM travelogues ORDER BY created_at DESC"
+        ).fetchall()
+    conn.close()
+
+    travelogues = []
+    for r in rows:
+        travelogues.append({
+            "id": r["id"],
+            "session_id": r["session_id"],
+            "title": r["title"],
+            "style": r["style"],
+            "spots_visited": json.loads(r["spots_json"]),
+            "created_at": r["created_at"],
+        })
+    return {"travelogues": travelogues}
+
+
+@app.get("/api/travelogues/{travelogue_id}")
+async def get_travelogue(travelogue_id: str):
+    """获取单篇游记详情"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT id, session_id, title, content, style, spots_json, created_at FROM travelogues WHERE id = ?",
+        (travelogue_id,),
+    ).fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="游记不存在")
+
+    return {
+        "id": row["id"],
+        "session_id": row["session_id"],
+        "title": row["title"],
+        "content": row["content"],
+        "style": row["style"],
+        "spots_visited": json.loads(row["spots_json"]),
+        "created_at": row["created_at"],
+    }
+
+
+@app.delete("/api/travelogues/{travelogue_id}")
+async def delete_travelogue(travelogue_id: str):
+    """删除一篇游记"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("DELETE FROM travelogues WHERE id = ?", (travelogue_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "message": "游记已删除"}
+
+
+# ==================== 天气 + 穿衣建议 ====================
+WEATHER_CLOTHING = {
+    "zh": {
+        "hot": "天气炎热，建议穿轻薄透气的短袖、短裤，戴遮阳帽和太阳镜，注意防晒，多喝水。",
+        "warm": "天气温暖舒适，建议穿薄款长袖或短袖 + 薄外套，早晚微凉可备一件开衫。",
+        "cool": "天气转凉，建议穿长袖 + 外套或薄毛衣，早晚需加一件风衣。",
+        "cold": "天气寒冷，建议穿厚外套、羽绒服，戴围巾手套，注意保暖。",
+        "rain": "有降雨，请携带雨伞或雨衣，穿防滑鞋，路面湿滑注意安全。",
+        "sunny": "阳光充足，紫外线较强，请涂抹防晒霜，佩戴太阳镜和遮阳帽。",
+    },
+    "en": {
+        "hot": "Hot weather. Wear light, breathable clothing (shorts, T-shirt). Bring a hat and sunglasses. Stay hydrated.",
+        "warm": "Warm and pleasant. Light long sleeves or T-shirt with a thin jacket for the evening.",
+        "cool": "Cool weather. Wear long sleeves with a jacket or light sweater. A windbreaker for the evening.",
+        "cold": "Cold weather. Wear a thick coat or down jacket, scarf and gloves. Keep warm.",
+        "rain": "Rain expected. Bring an umbrella or raincoat. Wear non-slip shoes.",
+        "sunny": "Sunny with strong UV. Apply sunscreen, wear sunglasses and a hat.",
+    },
+    "ja": {
+        "hot": "暑い天気です。薄手の半袖・短パンを着用し、帽子とサングラスを着用してください。水分補給を忘れずに。",
+        "warm": "暖かい天気です。薄手の長袖や半袖に薄い上着をお勧めします。",
+        "cool": "涼しい天気です。長袖にジャケットや薄手のセーターを着用してください。",
+        "cold": "寒い天気です。厚手のコートやダウンジャケット、マフラーと手袋を着用してください。",
+        "rain": "雨が予想されます。傘やレインコートをご持参ください。滑りにくい靴を着用してください。",
+        "sunny": "日差しが強いです。日焼け止めを塗り、サングラスと帽子を着用してください。",
+    },
+    "ko": {
+        "hot": "더운 날씨입니다. 얇은 반팔, 반바지를 입고 모자와 선글라스를 착용하세요. 수분을 충분히 섭취하세요.",
+        "warm": "따뜻한 날씨입니다. 얇은 긴팔이나 반팔에 얇은 겉옷을 추천합니다.",
+        "cool": "선선한 날씨입니다. 긴팔에 재킷이나 얇은 스웨터를 입으세요.",
+        "cold": "추운 날씨입니다. 두꺼운 코트나 패딩, 목도리와 장갑을 착용하세요.",
+        "rain": "비가 예상됩니다. 우산이나 우비를 챙기세요. 미끄럼 방지 신발을 신으세요.",
+        "sunny": "햇볕이 강합니다. 자외선 차단제를 바르고 선글라스와 모자를 착용하세요.",
+    },
+}
+
+
+@app.get("/api/weather")
+async def get_weather(lat: float = 31.425, lng: float = 120.10, lang: str = "zh"):
+    """获取天气信息 + 穿衣建议（使用 wttr.in 免费 API）"""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"https://wttr.in/{lat},{lng}?format=j1&lang={lang}",
+                headers={"User-Agent": "AI-Tour-Agent/1.0"},
+            )
+            if resp.status_code != 200:
+                raise HTTPException(status_code=502, detail="天气服务暂时不可用")
+
+            data = resp.json()
+            current = data.get("current_condition", [{}])[0]
+            weather_info = data.get("weather", [{}])[0]
+
+            temp_c = int(current.get("temp_C", 0))
+            humidity = current.get("humidity", "N/A")
+            weather_desc = current.get("weatherDesc", [{}])[0].get("value", "未知")
+            wind_speed = current.get("windspeedKmph", "N/A")
+            feels_like = current.get("FeelsLikeC", str(temp_c))
+            uv_index = current.get("uvIndex", "N/A")
+
+            # 穿衣建议
+            clothing = WEATHER_CLOTHING.get(lang, WEATHER_CLOTHING["zh"])
+            if temp_c >= 30:
+                advice = clothing["hot"]
+            elif temp_c >= 20:
+                advice = clothing["warm"]
+            elif temp_c >= 10:
+                advice = clothing["cool"]
+            else:
+                advice = clothing["cold"]
+
+            # 降雨提示
+            if "雨" in weather_desc or "rain" in weather_desc.lower() or "shower" in weather_desc.lower():
+                advice += " " + clothing["rain"]
+            # 紫外线提示
+            if uv_index != "N/A" and int(uv_index) >= 6:
+                advice += " " + clothing["sunny"]
+
+            # 今日预报
+            today_forecast = weather_info.get("hourly", [{}])[0] if weather_info.get("hourly") else {}
+            today_high = weather_info.get("maxtempC", "N/A")
+            today_low = weather_info.get("mintempC", "N/A")
+
+            return {
+                "current": {
+                    "temp_c": temp_c,
+                    "feels_like": feels_like,
+                    "humidity": humidity,
+                    "weather_desc": weather_desc,
+                    "wind_speed": wind_speed,
+                    "uv_index": uv_index,
+                },
+                "today": {
+                    "high": today_high,
+                    "low": today_low,
+                },
+                "clothing_advice": advice,
+                "location": f"{lat},{lng}",
+            }
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="天气服务请求超时")
+    except Exception as e:
+        logger.exception("天气获取失败")
+        raise HTTPException(status_code=500, detail=f"天气获取失败: {e}")
+
+
+# ==================== 拍照点推荐 ====================
+@app.get("/api/photo-spots")
+async def get_photo_spots():
+    """获取所有景点的拍照点推荐"""
+    spots = []
+    for s in SPOT_DATA:
+        if s.get("photo_spots"):
+            spots.append({
+                "spot_id": s["id"],
+                "spot_name": s["name"],
+                "icon": s["icon"],
+                "lat": s["lat"],
+                "lng": s["lng"],
+                "photo_spots": s["photo_spots"],
+            })
+    return {"spots": spots}
+
+
 # ==================== 健康检查 ====================
 @app.get("/health")
 async def health():
@@ -1059,6 +1676,13 @@ async def health():
         "qa_ready": qa_chain is not None,
         "knowledge_files": len(list(KNOWLEDGE_DIR.glob("*.txt"))) if KNOWLEDGE_DIR.exists() else 0,
     }
+
+
+# ---------- 托管前端静态文件（放在所有 API 路由之后） ----------
+FRONTEND_DIR = BASE_DIR.parent / "frontend_tourist"
+if FRONTEND_DIR.is_dir():
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
 
 
 if __name__ == "__main__":
