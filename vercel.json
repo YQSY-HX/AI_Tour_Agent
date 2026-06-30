@@ -3,7 +3,7 @@
   "builds": [
     {
       "src": "backend/app.py",
-      "use": "@vercel/python@3.7.0",
+      "use": "@vercel/python@3.12.0",
       "config": {
         "maxDuration": 60,
         "memory": 2048
