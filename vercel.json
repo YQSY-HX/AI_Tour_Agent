@@ -10,6 +10,7 @@
       }
     }
   ],
+  "installCommand": "pip install --break-system-packages -r backend/requirements.txt",
   "routes": [
     { "src": "/(.*)", "dest": "backend/app.py" }
   ]
