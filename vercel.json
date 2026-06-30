@@ -13,6 +13,5 @@
   "routes": [
     { "src": "/(.*)", "dest": "backend/app.py" }
   ],
-  "installCommand": "uv pip install --system -r backend/requirements.txt",
   "buildCommand": "uv run python backend/rag_chain.py"
 }
