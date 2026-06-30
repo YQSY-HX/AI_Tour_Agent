@@ -10,7 +10,7 @@
       }
     }
   ],
-  "installCommand": "pip install --break-system-packages -r requirements.txt",
+  "installCommand": "pip install --break-system-packages -r requirements-vercel.txt",
   "routes": [
     { "src": "/(.*)", "dest": "app.py" }
   ]
