@@ -25,51 +25,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 import httpx
+from langchain_classic.chains import RetrievalQA
+from langchain_community.document_loaders import DirectoryLoader, TextLoader
+from langchain_community.vectorstores import Chroma
 from langchain_core.embeddings import Embeddings
 from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-
-# 重依赖懒加载，避免 chromadb 在 Vercel 冷启动时导入崩溃
-_Chroma = None
-_RetrievalQA = None
-_DirectoryLoader = None
-_TextLoader = None
-_RecursiveCharacterTextSplitter = None
-
-def _get_chroma():
-    global _Chroma
-    if _Chroma is None:
-        from langchain_community.vectorstores import Chroma as _C
-        _Chroma = _C
-    return _Chroma
-
-def _get_retrieval_qa():
-    global _RetrievalQA
-    if _RetrievalQA is None:
-        from langchain_classic.chains import RetrievalQA as _R
-        _RetrievalQA = _R
-    return _RetrievalQA
-
-def _get_directory_loader():
-    global _DirectoryLoader
-    if _DirectoryLoader is None:
-        from langchain_community.document_loaders import DirectoryLoader as _D
-        _DirectoryLoader = _D
-    return _DirectoryLoader
-
-def _get_text_loader():
-    global _TextLoader
-    if _TextLoader is None:
-        from langchain_community.document_loaders import TextLoader as _T
-        _TextLoader = _T
-    return _TextLoader
-
-def _get_text_splitter():
-    global _RecursiveCharacterTextSplitter
-    if _RecursiveCharacterTextSplitter is None:
-        from langchain_text_splitters import RecursiveCharacterTextSplitter as _S
-        _RecursiveCharacterTextSplitter = _S
-    return _RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # 约束模型输出为纯文本，减少 Markdown
 QA_PROMPT = PromptTemplate(
@@ -271,19 +233,18 @@ def _load_documents():
     if not any(KNOWLEDGE_DIR.glob("*.txt")):
         print(f"[警告] {KNOWLEDGE_DIR} 下暂无 .txt 文件，将创建空向量库")
         return []
-    loader = _get_directory_loader()(
+    loader = DirectoryLoader(
         str(KNOWLEDGE_DIR),
         glob="**/*.txt",
-        loader_cls=_get_text_loader(),
+        loader_cls=TextLoader,
         loader_kwargs={"encoding": "utf-8"},
         show_progress=True,
     )
     return loader.load()
 
 
-def build_vectordb():
+def build_vectordb() -> Chroma:
     """构建（或重建）向量数据库"""
-    Chroma = _get_chroma()
     documents = _load_documents()
     embeddings = _get_embeddings()
 
@@ -293,7 +254,7 @@ def build_vectordb():
             persist_directory=str(CHROMA_DIR),
         )
 
-    splitter = _get_text_splitter()(
+    splitter = RecursiveCharacterTextSplitter(
         chunk_size=500,
         chunk_overlap=50,
     )
@@ -313,9 +274,8 @@ def build_vectordb():
     return db
 
 
-def load_vectordb():
+def load_vectordb() -> Chroma:
     """加载已持久化的 Chroma 向量库"""
-    Chroma = _get_chroma()
     embeddings = _get_embeddings()
     KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
     CHROMA_DIR.mkdir(parents=True, exist_ok=True)
@@ -325,9 +285,8 @@ def load_vectordb():
     )
 
 
-def create_qa_chain(db=None, interest: str = "general"):
+def create_qa_chain(db: Chroma | None = None, interest: str = "general") -> RetrievalQA:
     """创建 RetrievalQA 问答链"""
-    RetrievalQA = _get_retrieval_qa()
     if db is None:
         db = load_vectordb()
     llm = _get_llm()
@@ -345,14 +304,14 @@ def create_qa_chain(db=None, interest: str = "general"):
     )
 
 
-def rebuild_vectordb():
+def rebuild_vectordb() -> RetrievalQA:
     """重建向量库并返回新的 QA 链"""
     db = build_vectordb()
     return create_qa_chain(db)
 
 
 async def astream_rag_answer(
-    query: str, db=None, interest: str = "general",
+    query: str, db: Chroma | None = None, interest: str = "general",
     image_base64: str | None = None,
 ) -> AsyncIterator[str]:
     """

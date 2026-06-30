@@ -1,0 +1,15 @@
+{
+  "buildCommand": "pip install -r backend/requirements.txt",
+  "installCommand": "pip install -r backend/requirements.txt",
+  "outputDirectory": ".vercel/output",
+  "functions": {
+    "backend/app.py": {
+      "runtime": "@vercel/python@3.7.0",
+      "maxDuration": 60,
+      "memory": 2048
+    }
+  },
+  "routes": [
+    { "src": "/(.*)", "dest": "backend/app.py" }
+  ]
+}

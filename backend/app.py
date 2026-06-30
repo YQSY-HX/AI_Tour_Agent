@@ -33,45 +33,24 @@ from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile  # noqa: F401
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from text_utils import markdown_to_plaintext, plain_text_for_speech
-
-_BASE_DIR = Path(__file__).resolve().parent
-
-# 重依赖安全加载（Vercel 上某些包可能导入崩溃，降级为 None）
-try:
-    from rag_chain import (
-        CHROMA_DIR,
-        DEEPSEEK_API_KEY,
-        DEEPSEEK_BASE_URL,
-        KNOWLEDGE_DIR,
-        CHAT_MODEL,
-        VOLCANO_API_KEY,
-        INTEREST_CONFIG,
-        create_qa_chain,
-        load_vectordb,
-        rebuild_vectordb,
-        astream_rag_answer,
-    )
-    from langchain_openai import ChatOpenAI
-    _rag_loaded = True
-except Exception as _rag_err:
-    logger_error_temp = logging.getLogger("tour_agent")
-    logger_error_temp.warning(f"RAG 模块加载失败（将降级运行）: {_rag_err}")
-    CHROMA_DIR = None
-    DEEPSEEK_API_KEY = ""
-    DEEPSEEK_BASE_URL = ""
-    KNOWLEDGE_DIR = None
-    CHAT_MODEL = ""
-    VOLCANO_API_KEY = ""
-    INTEREST_CONFIG = {"general": {"label": "自由探索", "instruction": ""}}
-    create_qa_chain = None
-    load_vectordb = None
-    rebuild_vectordb = None
-    astream_rag_answer = None
-    ChatOpenAI = None
-    _rag_loaded = False
+from rag_chain import (
+    BASE_DIR,
+    CHROMA_DIR,
+    DEEPSEEK_API_KEY,
+    DEEPSEEK_BASE_URL,
+    KNOWLEDGE_DIR,
+    CHAT_MODEL,
+    VOLCANO_API_KEY,
+    INTEREST_CONFIG,
+    create_qa_chain,
+    load_vectordb,
+    rebuild_vectordb,
+    astream_rag_answer,
+)
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -86,7 +65,7 @@ session_memory: dict[str, list[dict[str, str]]] = {}
 MAX_HISTORY_TURNS = 6  # 最多保留最近 N 轮对话（每轮含 user+assistant）
 
 # SQLite 数据库路径
-DB_PATH = _BASE_DIR / "conversations.db"
+DB_PATH = BASE_DIR / "conversations.db"
 
 
 # ---------- 数据模型 ----------
@@ -296,13 +275,20 @@ async def lifespan(app: FastAPI):
     global qa_chain, vector_db
     init_db()
     try:
-        if CHROMA_DIR is not None and CHROMA_DIR.exists() and any(CHROMA_DIR.iterdir()):
+        if CHROMA_DIR.exists() and any(CHROMA_DIR.iterdir()):
             vector_db = load_vectordb()
             qa_chain = create_qa_chain(vector_db)
             logger.info("向量库与 QA 链加载成功")
         else:
-            logger.warning("chroma_db 为空或 RAG 模块未加载，RAG 问答不可用")
-            qa_chain = None
+            # 向量库为空时自动构建
+            logger.info("chroma_db 为空，开始自动构建向量库...")
+            try:
+                qa_chain = rebuild_vectordb()
+                vector_db = load_vectordb()
+                logger.info("向量库自动构建成功")
+            except Exception as build_err:
+                logger.error(f"向量库自动构建失败: {build_err}")
+                qa_chain = None
     except Exception as e:
         logger.error(f"启动加载失败: {e}")
         qa_chain = None
@@ -636,8 +622,6 @@ async def admin_upload(
     """
     上传 .txt / .pdf 到 knowledge_base/，并异步重建向量库
     """
-    if KNOWLEDGE_DIR is None:
-        raise HTTPException(status_code=503, detail="知识库模块未加载，当前环境不支持文件上传")
     filename = file.filename or "unknown"
     ext = Path(filename).suffix.lower()
     if ext not in (".txt", ".pdf"):
@@ -889,8 +873,6 @@ async def admin_sentiment():
     """
     对最近 100 条对话做情感分析（DeepSeek）并提取热门话题
     """
-    if ChatOpenAI is None:
-        raise HTTPException(status_code=503, detail="AI 模块未加载")
     if not DEEPSEEK_API_KEY:
         raise HTTPException(status_code=500, detail="未配置 DEEPSEEK_API_KEY")
 
@@ -984,8 +966,6 @@ async def admin_interests():
 @app.get("/admin/documents")
 async def admin_documents():
     """获取知识库文件列表"""
-    if KNOWLEDGE_DIR is None:
-        return {"files": []}
     KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
     files = []
     for f in sorted(KNOWLEDGE_DIR.glob("*.txt")):
@@ -1004,8 +984,6 @@ async def admin_delete_document(
     background_tasks: BackgroundTasks,
 ):
     """删除知识库文件并重建向量库"""
-    if KNOWLEDGE_DIR is None:
-        raise HTTPException(status_code=503, detail="知识库模块未加载")
     file_path = KNOWLEDGE_DIR / filename
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="文件不存在")
@@ -1265,8 +1243,6 @@ DURATION_MAP = {
 @app.post("/api/route/plan", response_model=RoutePlanResponse)
 async def route_plan(req: RoutePlanRequest):
     """游览路线规划：根据偏好和时长，AI 推荐最优游览顺序"""
-    if ChatOpenAI is None:
-        raise HTTPException(status_code=503, detail="AI 模块未加载")
     if not DEEPSEEK_API_KEY:
         raise HTTPException(status_code=500, detail="未配置 DEEPSEEK_API_KEY")
 
@@ -1376,8 +1352,6 @@ STYLE_MAP = {
 @app.post("/chat/travelogue", response_model=TravelogueResponse)
 async def generate_travelogue(req: TravelogueRequest):
     """根据会话历史生成 AI 游记"""
-    if ChatOpenAI is None:
-        raise HTTPException(status_code=503, detail="AI 模块未加载")
     if not DEEPSEEK_API_KEY:
         raise HTTPException(status_code=500, detail="未配置 DEEPSEEK_API_KEY")
 
@@ -1700,12 +1674,12 @@ async def health():
     return {
         "status": "ok",
         "qa_ready": qa_chain is not None,
-        "knowledge_files": len(list(KNOWLEDGE_DIR.glob("*.txt"))) if (KNOWLEDGE_DIR is not None and KNOWLEDGE_DIR.exists()) else 0,
+        "knowledge_files": len(list(KNOWLEDGE_DIR.glob("*.txt"))) if KNOWLEDGE_DIR.exists() else 0,
     }
 
 
 # ---------- 托管前端静态文件（放在所有 API 路由之后） ----------
-FRONTEND_DIR = _BASE_DIR.parent / "frontend_tourist"
+FRONTEND_DIR = BASE_DIR.parent / "frontend_tourist"
 if FRONTEND_DIR.is_dir():
     from fastapi.staticfiles import StaticFiles
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
